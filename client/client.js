@@ -641,6 +641,85 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /** 新建组合指令的默认骨架：compose 为空表示还没选要组合的指令。 */
+    function blankComposeTemplate() {
+      return {
+        id: `tpl-${Date.now().toString(36)}`,
+        name: '新组合指令',
+        description: '',
+        sync: 'merge',
+        compose: [],
+        variables: [],
+        steps: [],
+      }
+    }
+
+    /**
+     * 是否是组合指令（存在 compose 字段即组合，空数组表示还没选组件）。
+     *
+     * @param template 指令。
+     * @returns 是否组合指令。
+     */
+    function isComposedTemplate(template) {
+      return template !== null && template !== undefined && Array.isArray(template.compose)
+    }
+
+    /**
+     * 把组合指令展开成可执行的普通指令：按顺序合并变量、拼接被引用指令的步骤，
+     * 并给步骤 id 加上来源前缀，避免多条指令的 s1 冲突。
+     *
+     * @param template 组合指令或普通指令。
+     * @param templates 全部指令。
+     * @returns `{ template, error }`；出错时 template 为 null。
+     */
+    function expandComposedTemplate(template, templates) {
+      const byId = new Map((templates ?? []).map(item => [item.id, item]))
+      const variables = []
+      const variableKeys = new Set()
+      const steps = []
+      const usedIds = new Set()
+      const path = []
+      const addVariable = variable => {
+        if (variableKeys.has(variable.key)) return
+        variableKeys.add(variable.key)
+        variables.push(variable)
+      }
+      const walk = current => {
+        if (path.includes(current.id)) {
+          return `组合存在循环引用：${[...path, current.id].join(' → ')}`
+        }
+        path.push(current.id)
+        try {
+          for (const variable of current.variables ?? []) addVariable(variable)
+          if (isComposedTemplate(current)) {
+            for (const id of current.compose ?? []) {
+              const child = byId.get(id)
+              if (child === undefined) return `组合引用的指令不存在：${id}`
+              const error = walk(child)
+              if (error !== null) return error
+            }
+            return null
+          }
+          for (const step of current.steps ?? []) {
+            let stepId = `${current.id}:${step.id}`
+            let suffix = 2
+            while (usedIds.has(stepId)) {
+              stepId = `${current.id}:${step.id}#${suffix}`
+              suffix += 1
+            }
+            usedIds.add(stepId)
+            steps.push({ ...step, id: stepId })
+          }
+          return null
+        } finally {
+          path.pop()
+        }
+      }
+      const error = walk(template)
+      if (error !== null) return { template: null, error }
+      return { template: { ...template, variables, steps }, error: null }
+    }
+
     /**
      * 按指令声明初始化变量取值。
      *
@@ -2496,6 +2575,13 @@ window.__ModuleLoader__.load({
      * @returns React 节点数组。
      */
     function renderTemplateBody(view, draft) {
+      const composed = isComposedTemplate(draft)
+      const expansion = composed
+        ? expandComposedTemplate(draft, view.templates ?? [])
+        : { template: draft, error: null }
+      const chosenComponents = new Set(draft.compose ?? [])
+      const componentOptions = (view.templates ?? [])
+        .filter(item => item.id !== draft.id && !chosenComponents.has(item.id))
       /** 用变量默认值预览一遍步骤。 */
       const guess = {}
       for (const variable of draft.variables ?? []) guess[variable.key] = variable.default ?? ''
@@ -2532,8 +2618,8 @@ window.__ModuleLoader__.load({
           h('option', { value: 'rebase' }, '分叉时变基到远端（rebase）'),
           h('option', { value: 'ff' }, '只快进，分叉就停下'))),
 
-        // 变量
-        h('div', { className: 'dgf-subsec' },
+        // 变量（组合指令的变量由被引用指令自动合并，不在这里单独编辑）
+        composed ? null : h('div', { className: 'dgf-subsec' },
           h('div', { className: 'dgf-sec-head' },
             h('span', { className: 'dgf-sec-title' }, '变量'),
             h('button', { className: 'dgf-btn', onClick: view.onAddVariable }, '＋ 变量')),
@@ -2630,8 +2716,8 @@ window.__ModuleLoader__.load({
                 })
                 : null)))),
 
-        // 步骤
-        h('div', { className: 'dgf-subsec' },
+        // 步骤（组合指令的步骤由被引用指令展开）
+        composed ? null : h('div', { className: 'dgf-subsec' },
           h('div', { className: 'dgf-sec-head' },
             h('span', { className: 'dgf-sec-title' }, `步骤 · ${(draft.steps ?? []).length}`),
             h('button', { className: 'dgf-btn', onClick: view.onAddStep }, '＋ 步骤')),
@@ -2752,8 +2838,58 @@ window.__ModuleLoader__.load({
                     onChange: next => view.onEditStep(index, { target: next }),
                   })))))))),
 
-        // 预览
-        h('div', { className: 'dgf-subsec' },
+        // 组合指令：选择组件、自动合并变量、查看展开后的步骤
+        composed ? h('div', { className: 'dgf-subsec' },
+          h('div', { className: 'dgf-sec-head' },
+            h('span', { className: 'dgf-sec-title' }, `包含指令 · ${(draft.compose ?? []).length}`),
+            h('select', {
+              className: 'dgf-select',
+              value: '',
+              onChange: event => {
+                const id = event.target.value
+                if (id !== '') view.onAddComponent(id)
+              },
+            },
+            h('option', { value: '' }, '＋ 选择指令'),
+            componentOptions.map(item => h('option', { key: item.id, value: item.id }, item.name)))),
+          (draft.compose ?? []).length === 0
+            ? h('div', { className: 'dgf-empty' }, '还没有选择要组合的指令')
+            : (draft.compose ?? []).map((id, index) => {
+              const found = (view.templates ?? []).find(item => item.id === id)
+              return h('div', { key: `${id}:${index}`, className: 'dgf-edit-row', style: { marginTop: '4px' } },
+                h('span', { className: 'dgf-node' }, String(index + 1)),
+                h('span', { className: 'dgf-tplname' }, found === undefined ? `缺失的指令（${id}）` : found.name),
+                found !== undefined && isComposedTemplate(found)
+                  ? h('span', { className: 'dgf-chip' }, '组合')
+                  : null,
+                h('div', { className: 'dgf-grow' }),
+                h('button', {
+                  className: 'dgf-iconbtn', title: '上移', onClick: () => view.onMoveComponent(index, -1),
+                }, '↑'),
+                h('button', {
+                  className: 'dgf-iconbtn', title: '下移', onClick: () => view.onMoveComponent(index, 1),
+                }, '↓'),
+                h('button', {
+                  className: 'dgf-iconbtn',
+                  'data-variant': 'danger',
+                  title: '移除',
+                  onClick: () => view.onRemoveComponent(index),
+                }, '×'))
+            }),
+          expansion.error === null
+            ? h('div', { className: 'dgf-caption' },
+              `变量自动合并：${(expansion.template.variables ?? []).map(variable => variable.key).join('、') || '无'}`)
+            : h('div', { className: 'dgf-alert' }, expansion.error),
+          expansion.error === null && expansion.template.steps.length > 0
+            ? h('div', { style: { marginTop: '6px' } },
+              expansion.template.steps.map((step, index) => h('div', { key: `${step.id}:${index}`, className: 'dgf-flow' },
+                h('span', { className: 'dgf-chip' }, stepKindLabel(step.kind)),
+                h('span', null, `${step.source ? `${preview(step.source, guess)} → ` : ''}${preview(step.target, guess)}`))))
+            : null)
+          : null,
+
+        // 预览（普通指令）
+        composed ? null : h('div', { className: 'dgf-subsec' },
           h('div', { className: 'dgf-sec-head' },
             h('span', { className: 'dgf-sec-title' }, '预览')),
           (draft.steps ?? []).map((step, index) => {
@@ -2821,6 +2957,7 @@ window.__ModuleLoader__.load({
                   h('button', {
                     className: 'dgf-btn', 'data-variant': 'primary', onClick: view.onNewTemplate,
                   }, '新建'),
+                  h('button', { className: 'dgf-btn', onClick: view.onNewCompose }, '组合'),
                   h('button', { className: 'dgf-btn', onClick: view.onRestoreDefault }, '恢复默认'))),
               templates.length === 0
                 ? h('div', { className: 'dgf-empty' },
@@ -2841,6 +2978,7 @@ window.__ModuleLoader__.load({
                 },
                 h('span', { className: 'dgf-tplcaret' }, '▸'),
                 h('span', { className: 'dgf-tplname' }, item.name),
+                Array.isArray(item.compose) ? h('span', { className: 'dgf-chip' }, '组合') : null,
                 item.invalid === undefined ? null : h('span', { className: 'dgf-chip', 'data-tone': 'fail' }, '有问题')))))),
             h(LogView, { log })))
       }
@@ -2867,6 +3005,7 @@ window.__ModuleLoader__.load({
                 h('button', {
                   className: 'dgf-btn', 'data-variant': 'primary', onClick: view.onNewTemplate,
                 }, '新建'),
+                h('button', { className: 'dgf-btn', onClick: view.onNewCompose }, '组合'),
                 h('button', { className: 'dgf-btn', onClick: view.onRestoreDefault }, '恢复默认'))),
 
             // 列表：一行一个指令，点开的那个在下方展开配置。
@@ -2889,6 +3028,7 @@ window.__ModuleLoader__.load({
               },
               h('span', { className: 'dgf-tplcaret' }, '▸'),
               h('span', { className: 'dgf-tplname' }, shown.name),
+              Array.isArray(shown.compose) ? h('span', { className: 'dgf-chip' }, '组合') : null,
               item.__unsaved
                 ? h('span', { className: 'dgf-chip', 'data-tone': 'auto' }, '新的')
                 : null,
@@ -2944,6 +3084,8 @@ window.__ModuleLoader__.load({
       // 右键菜单：{ branch, x, y }；执行弹窗：{ templateId, branch, startIndex, phase }。
       const [menu, setMenu] = React.useState(null)
       const [execution, setExecution] = React.useState(null)
+      // 组合指令展开后的可执行版本；普通指令就是它本身。
+      const [executionExpanded, setExecutionExpanded] = React.useState(null)
       // 本次执行里手改过的提交说明：stepId -> 文本；空表示跟随指令内容。
       const [commitOverrides, setCommitOverrides] = React.useState({})
       // 最近一次执行失败记录：服务端持久化，面板重开/应用重启后仍能提示。
@@ -2978,7 +3120,7 @@ window.__ModuleLoader__.load({
       const template = templates.find(item => item.id === selectedId) ?? templates[0] ?? null
       const executionTemplate = execution === null || execution === undefined
         ? null
-        : templates.find(item => item.id === execution.templateId) ?? null
+        : executionExpanded
 
       /** 读仓库状态。 */
       const refreshRepo = async () => {
@@ -3286,11 +3428,18 @@ window.__ModuleLoader__.load({
        * @param startIndex 从第几步开始执行（失败重试用）。
        */
       const openExecution = (active, branch, startIndex = 0) => {
+        const expanded = expandComposedTemplate(active, templates)
         setMenu(null)
+        if (expanded.error !== null) {
+          setLog([{ ok: false, text: expanded.error }])
+          return
+        }
+        const runnable = expanded.template
         setSelectedId(active.id)
         rememberTemplate(active.id)
-        setValues(prefillValues(active, branches, branch))
-        setFollowing((active.variables ?? []).filter(variable => variable.derive).map(variable => variable.key))
+        setExecutionExpanded(runnable)
+        setValues(prefillValues(runnable, branches, branch))
+        setFollowing((runnable.variables ?? []).filter(variable => variable.derive).map(variable => variable.key))
         setStatuses({})
         setLog([])
         setRestoreBranch(true)
@@ -3308,6 +3457,7 @@ window.__ModuleLoader__.load({
         if (busy) return
         const finished = execution !== null && execution !== undefined && execution.phase === 'done'
         setExecution(null)
+        setExecutionExpanded(null)
         // 执行结束后再兜底刷新一次仓库与提交图：即使某次自动刷新被旧请求覆盖/失败，
         // 关闭窗口时也能看到最新的合并结果。
         if (finished) {
@@ -3441,12 +3591,14 @@ window.__ModuleLoader__.load({
        * @param value 新值。
        */
       const scheduleValue = (key, value) => {
+        // 组合指令执行时用展开后的变量表（合并了各组件的变量）。
+        const variables = (executionTemplate ?? template)?.variables ?? []
         setValues(prev => {
           const changed = { ...prev, [key]: value }
-          return propagateDerived(template.variables ?? [], changed, key, following)
+          return propagateDerived(variables, changed, key, following)
         })
         // 用户手改推导字段：填了值就退出跟随，清空则恢复跟随。
-        const isDerived = (template.variables ?? []).some(variable => variable.key === key && variable.derive)
+        const isDerived = variables.some(variable => variable.key === key && variable.derive)
         if (isDerived) {
           setFollowing(prev => {
             const isFollowing = prev.includes(key)
@@ -3628,6 +3780,27 @@ window.__ModuleLoader__.load({
           setDraft(blankTemplate())
           setLog([])
         },
+        onNewCompose: () => {
+          setDraft(blankComposeTemplate())
+          setLog([])
+        },
+        onAddComponent: id => {
+          if (typeof id !== 'string' || id === '') return
+          setDraft(prev => ({ ...prev, compose: [...(prev.compose ?? []), id] }))
+        },
+        onRemoveComponent: index => setDraft(prev => {
+          const compose = [...(prev.compose ?? [])]
+          compose.splice(index, 1)
+          return { ...prev, compose }
+        }),
+        onMoveComponent: (index, delta) => setDraft(prev => {
+          const compose = [...(prev.compose ?? [])]
+          const target = index + delta
+          if (target < 0 || target >= compose.length) return prev
+          const [moved] = compose.splice(index, 1)
+          compose.splice(target, 0, moved)
+          return { ...prev, compose }
+        }),
         onDuplicateTemplate: () => {
           if (!draft) return
           const copy = JSON.parse(JSON.stringify(draft))
@@ -3694,6 +3867,7 @@ window.__ModuleLoader__.load({
         GitFlowPanel, BranchPicker, StepNode, LastFailureBanner,
         branchRows, branchTree, collectDirPaths, FolderIcon, BranchList, BranchMenu, ExecutionModal, stepSummary,
         CommitGraph, layoutCommitGraph, graphRefInfo, commitTime,
+        blankComposeTemplate, isComposedTemplate, expandComposedTemplate,
         stepKindLabel, stepPushable, stepFlow,
         pickVariableFor, prefillValues,
         parseDiff, toSplitRows, changeLabel,

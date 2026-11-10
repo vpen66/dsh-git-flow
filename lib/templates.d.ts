@@ -80,6 +80,11 @@ export interface WorkflowTemplate {
     variables: TemplateVariable[];
     steps: WorkflowStep[];
     /**
+     * 组合指令：按顺序引用其它指令的 id，执行时把被引用指令的步骤展开、变量合并。
+     * 存在 compose 字段（哪怕是空数组）就表示这是组合指令，steps 必须为空。
+     */
+    compose?: string[];
+    /**
      * 校验失败的原因。只在读取时由服务端补上：损坏的指令不丢弃、不静默删除，
      * 而是带着原因返回，界面标为「无效」并拒绝执行，用户仍能编辑修复或导出。
      */
@@ -152,6 +157,14 @@ export declare function migrateTemplates(templates: WorkflowTemplate[], version:
  * @returns 错误说明；通过时返回 null。
  */
 export declare function validateTemplate(value: unknown): string | null;
+/**
+ * 校验组合指令引用的指令是否存在、是否成环（保存时用）。
+ *
+ * @param template 待保存的指令。
+ * @param all 保存后会落盘的全部指令（包含这条）。
+ * @returns 错误说明；合法时返回 null。
+ */
+export declare function validateComposeRefs(template: WorkflowTemplate, all: WorkflowTemplate[]): string | null;
 /**
  * 取出一个字段里引用的全部变量名。
  *
