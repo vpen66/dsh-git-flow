@@ -2082,6 +2082,7 @@ window.__ModuleLoader__.load({
       const commitSteps = steps
         .map((step, index) => ({ step, index }))
         .filter(item => item.step.kind === 'commit')
+        .map((item, order) => ({ ...item, order }))
       /** 显示/执行时用的提交说明：用户改过用改后的值，否则按指令内容和变量解析。 */
       const commitDisplay = step => (step.kind === 'commit' && commitOverrides[step.id] !== undefined
         ? commitOverrides[step.id]
@@ -2131,8 +2132,11 @@ window.__ModuleLoader__.load({
             ...commitSteps.map(item => {
               const override = commitOverrides[item.step.id]
               return h('div', { key: `commit:${item.step.id}`, className: 'dgf-field' },
-                h('span', { className: 'dgf-field-label' },
-                  commitSteps.length > 1 ? `第 ${item.index + 1} 步` : '提交说明'),
+                // 只有一个提交步骤时不再重复写「提交说明」：区块标题已经写过一次；
+                // 多个提交步骤才用「第 N 步」区分。
+                commitSteps.length > 1
+                  ? h('span', { className: 'dgf-field-label' }, `第 ${item.order + 1} 步`)
+                  : null,
                 h('input', {
                   className: cx('dgf-input', 'dgf-grow'),
                   value: override !== undefined ? override : commitDisplay(item.step),
