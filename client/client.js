@@ -1124,6 +1124,25 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 决定展示哪一条失败记录。
+     *
+     * 面板挂载时会异步读回服务端记录；如果这期间用户已经执行并产生了更新的失败，
+     * 读回的旧值不能把它覆盖掉。按时间戳取新者：服务端更新时以服务端为准。
+     *
+     * @param previous 当前展示的记录（可能来自本地执行）。
+     * @param last 服务端读回的记录。
+     * @returns 应该展示的记录，或 null。
+     */
+    function pickLastFailure(previous, last) {
+      const next = last && last.ok === false ? last : null
+      if (previous === null || previous === undefined) return next
+      const previousAt = Date.parse(previous.at ?? '')
+      const lastAt = last ? Date.parse(last.at ?? '') : Number.NaN
+      if (Number.isFinite(previousAt) && (!Number.isFinite(lastAt) || previousAt >= lastAt)) return previous
+      return next
+    }
+
+    /**
      * 一个执行步骤的管线节点。
      *
      * @param props 步骤、下标、解析后的分支、状态与回调。
@@ -2053,7 +2072,7 @@ window.__ModuleLoader__.load({
         try {
           const data = await post(ROUTE.lastStep, { sessionId })
           const last = data.last
-          setLastFailure(last && last.ok === false ? last : null)
+          setLastFailure(previous => pickLastFailure(previous, last))
         } catch {
           // 读不到历史不影响面板主流程。
         }
@@ -2655,7 +2674,8 @@ window.__ModuleLoader__.load({
       __test: {
         renderRun, renderEdit, post, explain, initialValues, preview, matches,
         blankTemplate, statusView, CSS, computeDerived, applyDerived, propagateDerived,
-        GitFlowPanel, BranchPicker, StepNode, LastFailureBanner, parseDiff, toSplitRows, changeLabel,
+        GitFlowPanel, BranchPicker, StepNode, LastFailureBanner, pickLastFailure,
+        parseDiff, toSplitRows, changeLabel,
       },
       apply(ctx) {
         ensureStyles()
