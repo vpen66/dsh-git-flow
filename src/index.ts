@@ -5,6 +5,7 @@
  * - `POST /git-flow/repo`：读会话工作目录的仓库状态（只读）。
  * - `POST /git-flow/templates` / `/save` / `/delete`：模板的读与改。
  * - `POST /git-flow/step`：执行模板中的一步。
+ * - `POST /git-flow/commit`：提交工作区里的改动（提交信息由面板填写）。
  *
  * 仓库路径来自会话自身的 `header.cwd`，不接受请求体传入的任意路径，因此浏览器
  * 侧无法借这个面板操作会话工作目录之外的仓库。
@@ -13,7 +14,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Session } from '@deepseek-ai/dsh-session'
-import { readRepo, abortMerge, continueMerge, checkoutBranch, fetchRemote, type RepoInfo } from './git.js'
+import { readRepo, abortMerge, continueMerge, checkoutBranch, fetchRemote, commitWorkspace, type RepoInfo } from './git.js'
 import { runStep, type StepOutcome } from './workflow.js'
 import type { SyncMode } from './git.js'
 import { TemplateStore, validateTemplate, type WorkflowStep, type WorkflowTemplate } from './templates.js'
@@ -37,6 +38,8 @@ export const STEP_PATH = '/git-flow/step'
 export const CONFLICT_PATH = '/git-flow/merge-conflict'
 /** 拉取远端更新的路由。 */
 export const FETCH_PATH = '/git-flow/fetch'
+/** 提交工作区改动的路由。 */
+export const COMMIT_PATH = '/git-flow/commit'
 /** 切回指定分支的路由。 */
 export const CHECKOUT_PATH = '/git-flow/checkout'
 /** 恢复内置默认模板路由。 */
@@ -158,7 +161,7 @@ function parseStep(value: unknown): WorkflowStep | null {
   if (typeof value !== 'object' || value === null) return null
   const step = value as Partial<WorkflowStep>
   if (typeof step.id !== 'string' || step.id === '') return null
-  if (step.kind !== 'create' && step.kind !== 'merge' && step.kind !== 'push') return null
+  if (step.kind !== 'create' && step.kind !== 'merge' && step.kind !== 'push' && step.kind !== 'tag') return null
   // push 步骤没有来源，其余类型必须有。
   if (step.kind !== 'push' && (typeof step.source !== 'string' || step.source === '')) return null
   if (typeof step.target !== 'string' || step.target === '') return null
@@ -195,13 +198,14 @@ const NO_REPO: RepoInfo = {
   current: '',
   inProgress: null,
   dirtyCount: 0,
+  untrackedCount: 0,
   conflicts: [],
   branches: [],
   error: '未找到该会话的工作目录',
 }
 
 /**
- * 插件入口：注册会话索引、模板存储、九条路由，以及给 AI 用的模板工具与命令。
+ * 插件入口：注册会话索引、模板存储、十条路由，以及给 AI 用的模板工具与命令。
  *
  * @param ctx 插件上下文。
  */
@@ -323,6 +327,14 @@ export function apply(ctx: Context): void {
       const cwd = repoOf(body)
       if (cwd === undefined) return { result: { ok: false, message: '未找到该会话的工作目录', output: '' } }
       return { result: await fetchRemote(cwd) }
+    })
+
+    // 提交工作区改动：提交说明由面板的输入框传入，只提交到本地、不推送。
+    route(COMMIT_PATH, async (body) => {
+      const cwd = repoOf(body)
+      if (cwd === undefined) return { result: { ok: false, message: '未找到该会话的工作目录', output: '' } }
+      const message = typeof body.message === 'string' ? body.message : ''
+      return { result: await commitWorkspace(cwd, message) }
     })
 
     // 执行完把用户送回原来的分支。

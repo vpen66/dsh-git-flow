@@ -5,6 +5,7 @@
  * - `POST /git-flow/repo`：读会话工作目录的仓库状态（只读）。
  * - `POST /git-flow/templates` / `/save` / `/delete`：模板的读与改。
  * - `POST /git-flow/step`：执行模板中的一步。
+ * - `POST /git-flow/commit`：提交工作区里的改动（提交信息由面板填写）。
  *
  * 仓库路径来自会话自身的 `header.cwd`，不接受请求体传入的任意路径，因此浏览器
  * 侧无法借这个面板操作会话工作目录之外的仓库。
@@ -26,12 +27,14 @@ export declare const STEP_PATH = "/git-flow/step";
 export declare const CONFLICT_PATH = "/git-flow/merge-conflict";
 /** 拉取远端更新的路由。 */
 export declare const FETCH_PATH = "/git-flow/fetch";
+/** 提交工作区改动的路由。 */
+export declare const COMMIT_PATH = "/git-flow/commit";
 /** 切回指定分支的路由。 */
 export declare const CHECKOUT_PATH = "/git-flow/checkout";
 /** 恢复内置默认模板路由。 */
 export declare const RESTORE_PATH = "/git-flow/templates/restore-default";
 /**
- * 插件入口：注册会话索引、模板存储、九条路由，以及给 AI 用的模板工具与命令。
+ * 插件入口：注册会话索引、模板存储、十条路由，以及给 AI 用的模板工具与命令。
  *
  * @param ctx 插件上下文。
  */

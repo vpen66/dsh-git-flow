@@ -42,18 +42,18 @@ export interface TemplateVariable {
     /** 自动填充规则；来源有值时覆盖默认值。 */
     derive?: VariableDerive;
 }
-/** 步骤种类：建分支、合并分支，或只把某个分支推到远端。 */
-export type StepKind = 'create' | 'merge' | 'push';
+/** 步骤种类：建分支、合并分支、只把某个分支推到远端，或在分支上打标签。 */
+export type StepKind = 'create' | 'merge' | 'push' | 'tag';
 /** 一个执行步骤。 */
 export interface WorkflowStep {
     /** 稳定标识，前端用来记录每一步的状态。 */
     id: string;
     kind: StepKind;
-    /** 建分支时的起点，或合并时的来源。允许 `{变量}`；`push` 步骤不用它。 */
+    /** 建分支时的起点、合并时的来源，或打标签时的来源分支。允许 `{变量}`；`push` 步骤不用它。 */
     source: string;
-    /** 建分支/合并的目标分支；`push` 步骤里表示要推送的分支。允许 `{变量}`。 */
+    /** 建分支/合并的目标分支；`tag` 步骤里表示标签名；`push` 步骤里表示要推送的分支。允许 `{变量}`。 */
     target: string;
-    /** 该步之后是否推送目标分支。 */
+    /** 该步之后是否推送目标分支（`tag` 步骤是推送标签）。 */
     push: boolean;
     /** 可选备注，显示在步骤标题旁。 */
     note?: string;
@@ -104,8 +104,8 @@ export declare function backupTemplates(): Promise<void>;
  * @returns 默认模板。
  */
 export declare function defaultReleaseTemplate(): WorkflowTemplate;
-/** 当前模板文件版本；2 起支持变量推导。 */
-export declare const TEMPLATE_FILE_VERSION = 2;
+/** 当前模板文件版本；2 起支持变量推导，3 起支持打标签步骤。 */
+export declare const TEMPLATE_FILE_VERSION = 3;
 /**
  * 计算一个变量的自动填充值。
  *
@@ -130,7 +130,8 @@ export declare function applyDerived(variables: TemplateVariable[], values: Reco
 /**
  * 把旧版本模板文件升级到当前版本。
  *
- * 只给内置的发布模板补上 `release` 的推导规则；用户自建模板原样保留，不擅自改动。
+ * 只给内置的发布模板补上 `release` 的推导规则与打标签步骤；用户自建模板原样保留，
+ * 不擅自改动。用户改过内置模板时也只补缺的部分，已有的变量和步骤绝不覆盖。
  *
  * @param templates 读到的模板列表。
  * @param version 原始文件版本。

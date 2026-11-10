@@ -127,8 +127,8 @@ function normalizeVariable(raw: VariableArgs): TemplateVariable {
  */
 function normalizeStep(raw: StepArgs, index: number): WorkflowStep {
   const kind = raw.kind
-  if (kind !== 'create' && kind !== 'merge' && kind !== 'push') {
-    throw new Error(`第 ${index + 1} 步的 kind 只能是 create / merge / push`)
+  if (kind !== 'create' && kind !== 'merge' && kind !== 'push' && kind !== 'tag') {
+    throw new Error(`第 ${index + 1} 步的 kind 只能是 create / merge / push / tag`)
   }
   const target = optionalString(raw.target)?.trim() ?? ''
   if (target === '') throw new Error(`第 ${index + 1} 步缺少 target`)
@@ -221,10 +221,10 @@ const ADD_TEMPLATE_PARAMETERS: Record<string, unknown> = {
         type: 'object',
         properties: {
           id: { type: 'string', description: '稳定标识，省略时按序号生成' },
-          kind: { type: 'string', enum: ['create', 'merge', 'push'], description: '建分支 / 合并 / 推送' },
-          source: { type: 'string', description: 'create 的起点或 merge 的来源；分支名可用 {变量}' },
-          target: { type: 'string', description: 'create/merge 的目标分支，或 push 要推送的分支' },
-          push: { type: 'boolean', description: '该步完成后是否推送目标分支' },
+          kind: { type: 'string', enum: ['create', 'merge', 'push', 'tag'], description: '建分支 / 合并 / 推送 / 打标签' },
+          source: { type: 'string', description: 'create 的起点、merge 的来源，或 tag 要打标签的分支；分支名可用 {变量}' },
+          target: { type: 'string', description: 'create/merge 的目标分支、tag 的标签名，或 push 要推送的分支' },
+          push: { type: 'boolean', description: '该步完成后是否推送目标分支；tag 步骤则是推送标签' },
           note: { type: 'string', description: '步骤备注' },
         },
         required: ['kind', 'target'],
@@ -250,7 +250,8 @@ export function registerTemplateTools(tools: unknown, store: TemplateStore): () 
   disposers.push(service.register({
     name: 'git_flow_add_template',
     description: '新增或更新一个 Git 工作流模板（存到 ~/.dsh/git-flow/templates.json）。'
-      + '模板由变量和有序步骤组成，步骤 kind 只能是 create / merge / push，分支名可用 {变量} 占位。'
+      + '模板由变量和有序步骤组成，步骤 kind 只能是 create / merge / push / tag，分支名可用 {变量} 占位。'
+      + 'tag 步骤在 source 分支的最新提交上打轻量标签，target 是标签名，push 为 true 时同时推送标签。'
       + '保存前会自动校验；id 已存在时默认拒绝覆盖。',
     parameters: ADD_TEMPLATE_PARAMETERS,
     output: {
@@ -298,8 +299,11 @@ export function registerTemplateTools(tools: unknown, store: TemplateStore): () 
             ? `推送 ${step.target}`
             : step.kind === 'create'
               ? `从 ${step.source} 创建 ${step.target}`
-              : `${step.source} → ${step.target}`
-          return `${index + 1}. ${action}${step.push && step.kind !== 'push' ? '（推送）' : ''}`
+              : step.kind === 'tag'
+                ? `从 ${step.source} 打标签 ${step.target}`
+                : `${step.source} → ${step.target}`
+          const pushed = step.kind === 'push' ? '' : step.kind === 'tag' ? '（推送标签）' : '（推送）'
+          return `${index + 1}. ${action}${step.push ? pushed : ''}`
         }).join('；')
         const invalid = template.invalid === undefined ? '' : ` [无效：${template.invalid}]`
         return `- ${template.name}（id: ${template.id}）${invalid}\n  变量：${variables}\n  步骤：${steps}`

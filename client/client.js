@@ -40,6 +40,7 @@ window.__ModuleLoader__.load({
       restore: 'git-flow/templates/restore-default',
       checkout: 'git-flow/checkout',
       fetch: 'git-flow/fetch',
+      commit: 'git-flow/commit',
     }
 
     /**
@@ -323,6 +324,17 @@ window.__ModuleLoader__.load({
 .dgf-confirm-hint{font-size:10px; line-height:1.5; color:var(--dgf-dim)}
 .dgf-confirm-actions{display:flex; gap:6px}
 .dgf-confirm-actions .dgf-btn{flex:1; padding:7px 10px}
+/* 提交对话框：把黄色警示描边换成青色，因为提交本身不是危险操作 */
+.dgf-confirm[data-tone=commit]{border-color:rgba(34,211,238,.5);
+  box-shadow:0 24px 60px -24px rgba(0,0,0,.95), 0 0 0 1px rgba(34,211,238,.16)}
+.dgf-commit-input{width:100%; min-height:66px; resize:vertical; font-family:inherit; font-size:11px;
+  line-height:1.55; padding:7px 9px; border-radius:8px; border:1px solid var(--dgf-line);
+  color:var(--dgf-text);
+  background:color-mix(in srgb, var(--dsw-alias-bg-layer-1,#11161f) 55%, transparent);
+  transition:border-color .16s, box-shadow .16s}
+.dgf-commit-input:focus{outline:none; border-color:rgba(34,211,238,.7);
+  box-shadow:0 0 0 2px rgba(34,211,238,.16)}
+.dgf-commit-input::placeholder{color:var(--dgf-dim); opacity:.7}
 
 .dgf-toggle{display:flex; align-items:center; gap:6px; font-size:10.5px; color:var(--dgf-dim);
   cursor:pointer; padding:2px 0; user-select:none}
@@ -820,9 +832,13 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dgf-step-top' },
             h('div', { style: { display: 'flex', gap: '5px', alignItems: 'center', flexWrap: 'wrap' } },
               h('span', { className: 'dgf-chip', 'data-tone': 'kind' },
-                step.kind === 'create' ? '建分支' : step.kind === 'push' ? '推送' : '合并'),
+                step.kind === 'create' ? '建分支' : step.kind === 'push' ? '推送' : step.kind === 'tag' ? '打标签' : '合并'),
               h('span', { className: 'dgf-chip', 'data-tone': view.tone }, view.text),
-              step.push ? h('span', { className: 'dgf-chip', 'data-tone': 'push' }, '推送') : null),
+              step.push ? h('span', {
+                className: 'dgf-chip',
+                'data-tone': 'push',
+                title: step.kind === 'tag' ? '打完标签后推送该标签' : null,
+              }, step.kind === 'tag' ? '推送标签' : '推送') : null),
             h('button', {
               className: 'dgf-btn',
               disabled: busy === true,
@@ -831,9 +847,9 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dgf-flow' },
             step.kind === 'push'
               ? h('span', { className: 'dgf-flow-src' }, '推送')
-              : h('span', { className: 'dgf-flow-src' }, step.kind === 'create' ? `从 ${source}` : source),
+              : h('span', { className: 'dgf-flow-src' }, step.kind === 'create' || step.kind === 'tag' ? `从 ${source}` : source),
             step.kind === 'push' ? null : h('span', { className: 'dgf-flow-arrow' }, '▸'),
-            h('span', { className: 'dgf-flow-dst' }, target)),
+            h('span', { className: 'dgf-flow-dst' }, step.kind === 'tag' ? `标签 ${target}` : target)),
           step.note ? h('div', { className: 'dgf-note' }, step.note) : null,
           status && status.message
             ? h('div', { className: 'dgf-result', 'data-status': state }, status.message)
@@ -901,11 +917,14 @@ window.__ModuleLoader__.load({
       }).length
       const percent = steps.length === 0 ? 0 : Math.round((doneCount / steps.length) * 100)
       const dirty = repo.dirtyCount > 0
+      const untracked = (repo.untrackedCount ?? 0) > 0
+      const canCommit = dirty || untracked
+      const merging = repo.inProgress !== null && repo.inProgress !== undefined
 
       return h('div', { className: 'dgf-root' },
         h(Hud, {
           tab: 'run',
-          led: error !== null ? 'bad' : dirty ? 'warn' : 'ok',
+          led: error !== null ? 'bad' : canCommit ? 'warn' : 'ok',
           onRunTab: view.onRunTab,
           onEditTab: view.onEditTab,
         }),
@@ -920,10 +939,22 @@ window.__ModuleLoader__.load({
                 title: '从 origin 拉取，更新各分支的落后情况（只 fetch，不改工作区）',
                 disabled: busy === true,
                 onClick: view.onPull,
-              }, '拉取'))),
+              }, '拉取'),
+              h('button', {
+                className: 'dgf-btn',
+                'data-variant': 'ghost',
+                title: merging
+                  ? '合并/变基未完成：先点「继续」或「中止」再提交'
+                  : canCommit
+                    ? '提交工作区里的改动（含未跟踪的新文件，只提交到本地不推送）'
+                    : '工作区没有需要提交的改动',
+                disabled: busy === true || merging || !canCommit,
+                onClick: view.onCommitOpen,
+              }, '提交'))),
           h('div', { className: 'dgf-caption' },
             repo.current ? `当前 ${repo.current}` : '游离 HEAD',
-            dirty ? ` · 已跟踪改动 ${repo.dirtyCount}` : ' · 工作区干净'),
+            dirty ? ` · 已跟踪改动 ${repo.dirtyCount}` : (untracked ? '' : ' · 工作区干净'),
+            untracked ? ` · 未跟踪 ${repo.untrackedCount}` : ''),
 
           // 合并停在冲突里：给出文件清单与两个出口，不用切终端也能收尾。
           repo.inProgress !== null && repo.inProgress !== undefined
@@ -1044,6 +1075,50 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dgf-caption', style: { textAlign: 'center' } },
             '已完成的分支与合并会自动跳过，可重复运行')),
 
+        // 提交对话框：填提交说明后把工作区里的全部改动提交到当前分支。
+        view.commitOpen === true
+          ? h('div', { className: 'dgf-confirm-mask' },
+            h('div', { className: 'dgf-confirm', 'data-tone': 'commit' },
+              h('div', { className: 'dgf-confirm-title' },
+                h('span', { className: 'dgf-led', 'data-state': 'warn' }),
+                '提交工作区改动'),
+              h('div', { className: 'dgf-confirm-meta' },
+                `${repo.root}${repo.current ? ` · 当前 ${repo.current}` : ''}`),
+              h('div', { className: 'dgf-confirm-hint' },
+                `${[
+                  dirty ? `已跟踪改动 ${repo.dirtyCount}` : '',
+                  untracked ? `未跟踪 ${repo.untrackedCount}` : '',
+                ].filter(Boolean).join(' · ')}，将提交到当前分支（只提交到本地，不推送）`),
+              h('textarea', {
+                className: 'dgf-commit-input',
+                value: view.commitMessage ?? '',
+                placeholder: '提交说明（必填，可用多行，例如：fix: 修正登录跳转）',
+                autoFocus: true,
+                rows: 3,
+                onChange: event => view.onCommitMessage(event.target.value),
+                onKeyDown: event => {
+                  if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+                    event.preventDefault()
+                    if (busy !== true && (view.commitMessage ?? '').trim() !== '') view.onCommitSubmit()
+                  }
+                },
+              }),
+              view.commitError ? h('div', { className: 'dgf-alert' }, view.commitError) : null,
+              h('div', { className: 'dgf-confirm-hint' }, 'Ctrl/⌘ + Enter 提交'),
+              h('div', { className: 'dgf-confirm-actions' },
+                h('button', {
+                  className: 'dgf-btn',
+                  disabled: busy === true,
+                  onClick: view.onCommitCancel,
+                }, '取消'),
+                h('button', {
+                  className: 'dgf-btn',
+                  'data-variant': 'primary',
+                  disabled: busy === true || (view.commitMessage ?? '').trim() === '',
+                  onClick: view.onCommitSubmit,
+                }, busy === true ? '提交中…' : '提交'))))
+          : null,
+
         // 执行前确认：把解析后的流程摆出来，避免误触直接改分支。
         view.pending === null || view.pending === undefined
           ? null
@@ -1069,9 +1144,12 @@ window.__ModuleLoader__.load({
                         ? `推送 ${target}`
                         : step.kind === 'create'
                           ? `从 ${source} 创建 ${target}`
-                          : `${source} → ${target}`),
+                          : step.kind === 'tag'
+                            ? `从 ${source} 打标签 ${target}`
+                            : `${source} → ${target}`),
                     step.kind !== 'push' && step.push
-                      ? h('span', { className: 'dgf-chip', 'data-tone': 'push' }, '推送')
+                      ? h('span', { className: 'dgf-chip', 'data-tone': 'push' },
+                        step.kind === 'tag' ? '推送标签' : '推送')
                       : null)
                 })),
               h('div', { className: 'dgf-confirm-hint' },
@@ -1261,6 +1339,7 @@ window.__ModuleLoader__.load({
               },
               h('option', { value: 'create' }, '建分支'),
               h('option', { value: 'merge' }, '合并'),
+              h('option', { value: 'tag' }, '打标签'),
               h('option', { value: 'push' }, '推送')),
               // 「推送」步骤本身就是推送，不需要再勾一次。
               step.kind === 'push'
@@ -1275,7 +1354,7 @@ window.__ModuleLoader__.load({
                   type: 'checkbox',
                   checked: step.push === true,
                   onChange: event => view.onEditStep(index, { push: event.target.checked }),
-                }), '推送'),
+                }), step.kind === 'tag' ? '推送标签' : '推送'),
               h('div', { className: 'dgf-grow' }),
               h('button', {
                 className: 'dgf-iconbtn', title: '上移', onClick: () => view.onMoveStep(index, -1),
@@ -1299,6 +1378,25 @@ window.__ModuleLoader__.load({
                   placeholder: '要推到远端的分支',
                   onChange: next => view.onEditStep(index, { target: next }),
                 }))
+              : step.kind === 'tag'
+                ? h('div', null,
+                  h('div', { className: 'dgf-field', style: { marginTop: '5px' } },
+                    h('span', { className: 'dgf-field-label' }, '从'),
+                    h(BranchPicker, {
+                      value: step.source,
+                      variables: draft.variables ?? [],
+                      branches: view.branches ?? [],
+                      placeholder: '选要打标签的分支，也可直接输入',
+                      onChange: next => view.onEditStep(index, { source: next }),
+                    })),
+                  h('div', { className: 'dgf-field', style: { marginTop: '4px' } },
+                    h('span', { className: 'dgf-field-label' }, '标签'),
+                    h('input', {
+                      className: cx('dgf-input', 'dgf-grow'),
+                      value: step.target,
+                      placeholder: '标签名，如 v1.0.1；可用 {变量}',
+                      onChange: event => view.onEditStep(index, { target: event.target.value }),
+                    })))
               : h('div', null,
                 h('div', { className: 'dgf-field', style: { marginTop: '5px' } },
                   h('span', { className: 'dgf-field-label' }, step.kind === 'create' ? '从' : '来源'),
@@ -1329,11 +1427,12 @@ window.__ModuleLoader__.load({
             return h('div', { key: index, className: 'dgf-flow' },
               step.kind === 'push'
                 ? h('span', { className: 'dgf-flow-src' }, '推送')
-                : h('span', { className: 'dgf-flow-src' }, step.kind === 'create' ? `从 ${source}` : source),
+                : h('span', { className: 'dgf-flow-src' }, step.kind === 'create' || step.kind === 'tag' ? `从 ${source}` : source),
               step.kind === 'push' ? null : h('span', { className: 'dgf-flow-arrow' }, '▸'),
-              h('span', { className: 'dgf-flow-dst' }, target),
+              h('span', { className: 'dgf-flow-dst' }, step.kind === 'tag' ? `标签 ${target}` : target),
               step.kind !== 'push' && step.push
-                ? h('span', { className: 'dgf-chip', 'data-tone': 'push' }, '推送')
+                ? h('span', { className: 'dgf-chip', 'data-tone': 'push' },
+                  step.kind === 'tag' ? '推送标签' : '推送')
                 : null)
           })),
 
@@ -1505,6 +1604,10 @@ window.__ModuleLoader__.load({
       const [restoreBranch, setRestoreBranch] = React.useState(true)
       // 待确认的执行请求：{ mode: 'all' | 'retry' | 'one', fromIndex?, index? }
       const [pending, setPending] = React.useState(null)
+      // 提交对话框：是否打开、提交说明与失败原因。
+      const [commitOpen, setCommitOpen] = React.useState(false)
+      const [commitMessage, setCommitMessage] = React.useState('')
+      const [commitError, setCommitError] = React.useState(null)
       // 正在跟随推导的变量 key；用户手填后移出，清空后放回。
       const [following, setFollowing] = React.useState([])
 
@@ -1536,6 +1639,31 @@ window.__ModuleLoader__.load({
           setLog([{ ok: result.ok, text: result.message }])
         } catch (err) {
           setLog([{ ok: false, text: explain(err) }])
+        } finally {
+          setBusy(false)
+          await refreshRepo()
+        }
+      }
+
+      /** 提交工作区改动；失败时把原因留在对话框里，成功则关闭对话框并重读仓库。 */
+      const submitCommit = async () => {
+        if (busy) return
+        setBusy(true)
+        setCommitError(null)
+        try {
+          const data = await post(ROUTE.commit, { sessionId, message: commitMessage })
+          const result = data.result
+          setLog([{ ok: result.ok, text: result.message }])
+          if (result.ok) {
+            setCommitOpen(false)
+            setCommitMessage('')
+          } else {
+            setCommitError(result.message)
+          }
+        } catch (err) {
+          const message = explain(err)
+          setLog([{ ok: false, text: message }])
+          setCommitError(message)
         } finally {
           setBusy(false)
           await refreshRepo()
@@ -1841,6 +1969,20 @@ window.__ModuleLoader__.load({
           onRefresh: () => void refreshRepo(),
           onReloadTemplates: () => void refreshTemplates(),
           onPull: () => void pullUpdates(),
+          commitOpen,
+          commitMessage,
+          commitError,
+          onCommitOpen: () => {
+            setCommitError(null)
+            setCommitOpen(true)
+          },
+          onCommitMessage: next => setCommitMessage(next),
+          onCommitCancel: () => {
+            if (busy) return
+            setCommitOpen(false)
+            setCommitError(null)
+          },
+          onCommitSubmit: () => void submitCommit(),
           onSelectTemplate: id => {
             setSelectedId(id)
             rememberTemplate(id)
