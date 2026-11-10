@@ -87,6 +87,42 @@ export declare function conflictedFiles(cwd: string): Promise<string[]>;
  * @returns 仓库状态；非仓库时 `isRepo` 为 false。
  */
 export declare function readRepo(cwd: string): Promise<RepoInfo>;
+/** 提交图里的一条提交。 */
+export interface GraphCommit {
+    /** 完整提交哈希。 */
+    hash: string;
+    /** 父提交哈希；根提交为空数组，合并提交有多个。 */
+    parents: string[];
+    /** 作者名。 */
+    author: string;
+    /** 作者时间（Unix 秒）。 */
+    at: number;
+    /** 提交标题。 */
+    subject: string;
+    /** 指向这条提交的引用（`HEAD -> x`、分支、`origin/x`、`tag: x`）。 */
+    refs: string[];
+}
+/** 提交图数据。 */
+export interface CommitGraph {
+    commits: GraphCommit[];
+    /** 当前分支；游离 HEAD 时为 HEAD。 */
+    current: string;
+    /** HEAD 指向的提交；没有提交时为空串。 */
+    head: string;
+    /** 读取失败原因；成功为 null。 */
+    error: string | null;
+}
+/**
+ * 读取提交图：一次 `git log --all`，带上父提交、作者、时间与引用。
+ *
+ * 只读：不 fetch、不切换分支、不改工作区。按 `--topo-order` 返回，保证父提交在子提交之后，
+ * 前端可以据此画分叉/合并线。
+ *
+ * @param cwd 仓库目录。
+ * @param limit 最多返回多少条提交（默认 80，上限 200）。
+ * @returns 提交图数据；非仓库或读取失败时 error 有值。
+ */
+export declare function readCommitGraph(cwd: string, limit?: number): Promise<CommitGraph>;
 /** 工作区里的一处改动。 */
 export interface FileChange {
     /** 相对仓库根的路径。 */

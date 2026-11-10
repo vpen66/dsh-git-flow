@@ -9,6 +9,7 @@
  * - `POST /git-flow/changes`：列出工作区里的改动文件（提交弹层的勾选列表）。
  * - `POST /git-flow/diff`：读取单个改动文件的对比 diff（提交弹层的 diff 预览）。
  * - `POST /git-flow/switch-branch`：切换当前分支（本地没有但远端存在时按需创建）。
+ * - `POST /git-flow/graph`：读取提交图（只读）。
  *
  * 仓库路径来自会话自身的 `header.cwd`，不接受请求体传入的任意路径，因此浏览器
  * 侧无法借这个面板操作会话工作目录之外的仓库。
@@ -44,10 +45,12 @@ export declare const DIFF_PATH = "/git-flow/diff";
 export declare const CHECKOUT_PATH = "/git-flow/checkout";
 /** 切换当前分支的路由。 */
 export declare const SWITCH_PATH = "/git-flow/switch-branch";
+/** 提交图路由。 */
+export declare const GRAPH_PATH = "/git-flow/graph";
 /** 恢复内置默认指令路由。 */
 export declare const RESTORE_PATH = "/git-flow/templates/restore-default";
 /**
- * 插件入口：注册会话索引、指令存储、十五条路由，以及给 AI 用的指令工具与命令。
+ * 插件入口：注册会话索引、指令存储、十六条路由，以及给 AI 用的指令工具与命令。
  *
  * @param ctx 插件上下文。
  */
