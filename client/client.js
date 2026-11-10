@@ -2993,17 +2993,23 @@ window.__ModuleLoader__.load({
       }
 
       /** 读提交图（只读）；按当前范围和条数取，支持逐步加载更多。 */
+      const graphRequestId = React.useRef(0)
       const refreshGraph = async (limit = graphLimit, scope = graphScope) => {
         if (!sessionId) return
+        // 只认最后一次请求的结果，避免旧请求晚到把执行后的新图覆盖回去。
+        const requestId = graphRequestId.current + 1
+        graphRequestId.current = requestId
         setGraphLoading(true)
         try {
           const data = await post(ROUTE.graph, { sessionId, limit, scope })
+          if (graphRequestId.current !== requestId) return
           setGraph(data.graph ?? { commits: [], current: '', head: '', error: null })
           setGraphError(data.graph && data.graph.error ? data.graph.error : null)
         } catch (err) {
+          if (graphRequestId.current !== requestId) return
           setGraphError(explain(err))
         } finally {
-          setGraphLoading(false)
+          if (graphRequestId.current === requestId) setGraphLoading(false)
         }
       }
 
@@ -3300,7 +3306,14 @@ window.__ModuleLoader__.load({
       /** 关闭执行弹窗；执行中不允许关闭，避免状态更新落在已卸载的界面逻辑上。 */
       const closeExecution = () => {
         if (busy) return
+        const finished = execution !== null && execution !== undefined && execution.phase === 'done'
         setExecution(null)
+        // 执行结束后再兜底刷新一次仓库与提交图：即使某次自动刷新被旧请求覆盖/失败，
+        // 关闭窗口时也能看到最新的合并结果。
+        if (finished) {
+          void refreshRepo()
+          void refreshGraph()
+        }
       }
 
       /** 右键分支：打开指令菜单。 */
