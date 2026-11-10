@@ -1418,16 +1418,16 @@ window.__ModuleLoader__.load({
         total === 0
           ? h('div', { className: 'dgf-empty' }, '没有可用分支')
           : h('div', { className: 'dgf-branches' }, renderNodes(tree, 0)),
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
-          h('span', { className: 'dgf-caption', style: { flex: 1 } },
-            '左键切换分支；右键选择模板执行；点目录展开/收起'),
-          h('button', {
-            className: 'dgf-btn',
-            'data-variant': 'ghost',
-            style: { flex: 'none', padding: '2px 6px', fontSize: '9px' },
-            title: allOpen ? '收起所有目录' : '展开所有目录',
-            onClick: toggleAll,
-          }, allOpen ? '收起全部' : '展开全部')))
+        dirPaths.length === 0
+          ? null
+          : h('div', { style: { display: 'flex', justifyContent: 'flex-end' } },
+            h('button', {
+              className: 'dgf-btn',
+              'data-variant': 'ghost',
+              style: { flex: 'none', padding: '2px 6px', fontSize: '9px' },
+              title: allOpen ? '收起所有目录' : '展开所有目录',
+              onClick: toggleAll,
+            }, allOpen ? '收起全部' : '展开全部')))
     }
 
     /**
@@ -2130,10 +2130,7 @@ window.__ModuleLoader__.load({
                 }, '中止')))
             : null,
 
-          h(LogView, { log }),
-
-          h('div', { className: 'dgf-caption', style: { textAlign: 'center' } },
-            '右键分支选择模板执行；已完成的分支与合并会自动跳过，可重复运行')),
+          h(LogView, { log })),
 
         // 提交对话框：勾选要提交的文件、填提交说明后提交到当前分支。
         view.commitOpen === true
