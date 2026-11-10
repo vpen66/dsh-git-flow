@@ -1,0 +1,4 @@
+# 组合补丁：把 Git 发布面板挂进当前 profile。
+- insert:
+    - id: git-flow
+      name: 'dsh-git-flow'
