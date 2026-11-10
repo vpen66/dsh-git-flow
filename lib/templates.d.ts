@@ -161,8 +161,15 @@ export declare function placeholdersOf(field: string): string[];
 export declare function renderField(field: string, values: Record<string, string>): string;
 /** 模板存储：读、写、初始化。 */
 export declare class TemplateStore {
-    /** 串行化写入，避免并发保存互相覆盖。 */
+    /** 串行化模板文件的每一次读-改-写，避免并发保存互相覆盖。 */
     private queue;
+    /**
+     * 把一段任务串到队列末尾；前一个任务失败也继续排队。
+     *
+     * @param task 要执行的任务。
+     * @returns 任务结果。
+     */
+    private enqueue;
     /**
      * 读取全部模板；文件不存在时写入默认模板再返回。
      *
@@ -170,11 +177,27 @@ export declare class TemplateStore {
      */
     load(): Promise<WorkflowTemplate[]>;
     /**
+     * 读全部模板，并按需写回默认模板或迁移结果。
+     *
+     * 只在队列任务内部调用：它可能写盘，但不会再次入队，因此不会自锁。
+     *
+     * @returns 模板列表。
+     */
+    private readForWrite;
+    /**
      * 覆盖写入全部模板。
      *
      * @param templates 模板列表。
      */
     save(templates: WorkflowTemplate[]): Promise<void>;
+    /**
+     * 原子写入模板文件：先写临时文件再 rename。
+     *
+     * 直接覆盖时若进程崩溃会留下截断 JSON，下一次 load() 只能靠备份找回。
+     *
+     * @param templates 模板列表。
+     */
+    private writeNow;
     /**
      * 新增或更新一个模板。
      *

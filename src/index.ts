@@ -17,6 +17,8 @@ import { readRepo, abortMerge, continueMerge, checkoutBranch, fetchRemote, type 
 import { runStep, type StepOutcome } from './workflow.js'
 import type { SyncMode } from './git.js'
 import { TemplateStore, validateTemplate, type WorkflowStep, type WorkflowTemplate } from './templates.js'
+import { registerTemplateTools } from './tools.js'
+import { registerAddTemplateCommand } from './command.js'
 
 /** 服务端需要的宿主服务：会话存储用于按 id 反查工作目录。 */
 export const inject = ['sessions']
@@ -199,7 +201,7 @@ const NO_REPO: RepoInfo = {
 }
 
 /**
- * 插件入口：注册会话索引、模板存储与五条路由。
+ * 插件入口：注册会话索引、模板存储、九条路由，以及给 AI 用的模板工具与命令。
  *
  * @param ctx 插件上下文。
  */
@@ -207,6 +209,20 @@ export function apply(ctx: Context): void {
   const store = new TemplateStore()
   // 会话 id → 工作目录。路由只能操作这些目录，请求体里的路径一律不采信。
   const workspaces = new Map<string, string>()
+
+  // AI 集成：注册模板工具与 `/add-template` 命令。都走嵌套注入并容忍服务缺席——
+  // 没有 commands/tools 的 profile（例如 CLI）里，右栏面板照常工作。
+  ctx.inject(['tools'], (toolsCtx: Context) => {
+    const tools = Reflect.get(toolsCtx, 'tools') as unknown
+    if (tools === undefined || tools === null) return
+    ctx.effect(() => registerTemplateTools(tools, store), 'git-flow: template tools')
+  })
+
+  ctx.inject(['commands'], (commandsCtx: Context) => {
+    const commands = Reflect.get(commandsCtx, 'commands') as unknown
+    if (commands === undefined || commands === null) return
+    ctx.effect(() => registerAddTemplateCommand(commands), 'git-flow: /add-template')
+  })
 
   /**
    * 解析会话的工作目录。
