@@ -112,7 +112,7 @@ export declare function backupTemplates(): Promise<void>;
  */
 export declare function defaultReleaseTemplate(): WorkflowTemplate;
 /** 当前指令文件版本；2 起支持变量推导，3 起支持打标签步骤。 */
-export declare const TEMPLATE_FILE_VERSION = 3;
+export declare const TEMPLATE_FILE_VERSION = 4;
 /**
  * 计算一个变量的自动填充值。
  *

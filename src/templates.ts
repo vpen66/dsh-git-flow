@@ -155,7 +155,7 @@ export async function backupTemplates(): Promise<void> {
 export function defaultReleaseTemplate(): WorkflowTemplate {
   return {
     id: 'release-default',
-    name: '发布流程（默认）',
+    name: '发布流程（示例）',
     description: '从基础分支拉发布分支，合入功能分支，依次发预发和生产，回流后打版本标签',
     variables: [
       { key: 'base', label: '基础分支', kind: 'pick', pattern: 'develop' },
@@ -189,7 +189,7 @@ export function defaultReleaseTemplate(): WorkflowTemplate {
 }
 
 /** 当前指令文件版本；2 起支持变量推导，3 起支持打标签步骤。 */
-export const TEMPLATE_FILE_VERSION = 3
+export const TEMPLATE_FILE_VERSION = 4
 
 /**
  * 计算一个变量的自动填充值。
@@ -276,6 +276,10 @@ export function migrateTemplates(templates: WorkflowTemplate[], version: number)
       next = { ...next, variables }
     }
     if (version < 3) next = addReleaseTag(next)
+    // v4：内置指令从「默认」改叫「示例」；用户改过名字的不动。
+    if (version < 4 && next.name === '发布流程（默认）') {
+      next = { ...next, name: '发布流程（示例）' }
+    }
     return next
   })
 }

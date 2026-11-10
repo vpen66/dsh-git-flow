@@ -182,7 +182,7 @@ function normalizeTemplate(args: AddTemplateArgs): WorkflowTemplate {
 const ADD_TEMPLATE_PARAMETERS: Record<string, unknown> = {
   type: 'object',
   properties: {
-    name: { type: 'string', description: '指令名称，例如「发布流程（默认）」' },
+    name: { type: 'string', description: '指令名称，例如「发布流程（示例）」' },
     description: { type: 'string', description: '一句话说明' },
     id: { type: 'string', description: '指令 id；省略时自动生成，覆盖已有指令时必须显式提供' },
     sync: {
