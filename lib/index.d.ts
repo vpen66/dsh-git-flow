@@ -25,6 +25,10 @@ export declare const SAVE_PATH = "/git-flow/templates/save";
 export declare const DELETE_PATH = "/git-flow/templates/delete";
 /** 单步执行路由。 */
 export declare const STEP_PATH = "/git-flow/step";
+/** 最近一次步骤执行结果的路由。 */
+export declare const LAST_STEP_PATH = "/git-flow/last-step";
+/** 清除最近一次步骤结果的路由。 */
+export declare const CLEAR_LAST_STEP_PATH = "/git-flow/last-step/clear";
 /** 冲突处理路由：中止或完成进行中的合并。 */
 export declare const CONFLICT_PATH = "/git-flow/merge-conflict";
 /** 拉取远端更新的路由。 */

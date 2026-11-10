@@ -36,6 +36,8 @@ window.__ModuleLoader__.load({
       save: 'git-flow/templates/save',
       remove: 'git-flow/templates/delete',
       step: 'git-flow/step',
+      lastStep: 'git-flow/last-step',
+      clearLastStep: 'git-flow/last-step/clear',
       conflict: 'git-flow/merge-conflict',
       restore: 'git-flow/templates/restore-default',
       checkout: 'git-flow/checkout',
@@ -270,6 +272,14 @@ window.__ModuleLoader__.load({
 .dgf-conflict-file::before{content:"! "; color:var(--dgf-red)}
 .dgf-conflict-hint{font-size:10px; color:var(--dgf-dim); line-height:1.5}
 
+/* 顶部「上次执行失败」横幅：面板重开/应用重启后仍然可见 */
+.dgf-lastfail{display:flex; flex-direction:column; gap:7px; padding:9px 10px; border-radius:10px;
+  border:1px solid rgba(251,113,133,.55); background:rgba(251,113,133,.10); color:#ffc9d2}
+.dgf-lastfail-title{font-size:11px; font-weight:600; letter-spacing:.06em; color:var(--dgf-red)}
+.dgf-lastfail-meta{font-size:10px; color:var(--dgf-dim); word-break:break-word}
+.dgf-lastfail-msg{font-size:10.5px; line-height:1.5; word-break:break-word}
+.dgf-lastfail-actions{display:flex; gap:6px; flex-wrap:wrap}
+
 /* 分支选择器：输入框 + 可选下拉 */
 .dgf-picker{position:relative; flex:1; min-width:0}
 .dgf-picker-field{display:flex; align-items:center; gap:5px; min-width:0}
@@ -413,6 +423,7 @@ window.__ModuleLoader__.load({
   .dgf-result[data-status=failed]{color:#be123c}
   .dgf-log-row[data-ok=false]{color:#be123c}
   .dgf-alert{color:#9f1239; border-color:rgba(190,18,60,.35); background:rgba(190,18,60,.06)}
+  .dgf-lastfail{color:#9f1239; border-color:rgba(190,18,60,.4); background:rgba(190,18,60,.07)}
   .dgf-node[data-status=ok]{box-shadow:0 0 8px rgba(5,150,105,.3)}
 }
 
@@ -1068,6 +1079,51 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 顶部「上次执行失败」横幅。
+     *
+     * 记录来自服务端持久化：面板重开、应用重启后依然能看到上次为什么失败。
+     *
+     * @param props `record`、展开状态与三个回调。
+     * @returns React 节点。
+     */
+    function LastFailureBanner(props) {
+      const { record, open } = props
+      if (!record) return null
+      const when = typeof record.at === 'string' ? new Date(record.at) : null
+      const timeText = when !== null && !Number.isNaN(when.getTime())
+        ? when.toLocaleString('zh-CN', { hour12: false })
+        : ''
+      const stepLabel = typeof record.stepIndex === 'number' ? `第 ${record.stepIndex + 1} 步` : '某一步'
+      const action = record.kind === 'push'
+        ? `推送 ${record.target}`
+        : record.kind === 'create'
+          ? `从 ${record.source} 创建 ${record.target}`
+          : record.kind === 'tag'
+            ? `打标签 ${record.target}`
+            : `${record.source} → ${record.target}`
+      return h('div', { className: 'dgf-lastfail', role: 'alert' },
+        h('div', { className: 'dgf-lastfail-title' }, '⚠ 上次执行失败'),
+        h('div', { className: 'dgf-lastfail-meta' },
+          [timeText, record.templateName, `${stepLabel}：${action}`].filter(Boolean).join(' · ')),
+        h('div', { className: 'dgf-lastfail-msg' }, record.message || '未知错误'),
+        h('div', { className: 'dgf-lastfail-actions' },
+          h('button', { className: 'dgf-btn', onClick: props.onToggle }, open ? '收起详情' : '查看详情'),
+          typeof record.stepIndex === 'number'
+            ? h('button', {
+              className: 'dgf-btn',
+              'data-variant': 'primary',
+              onClick: props.onRetry,
+            }, '重试这一步')
+            : null,
+          h('button', {
+            className: 'dgf-btn',
+            'data-variant': 'ghost',
+            onClick: props.onDismiss,
+          }, '忽略')),
+        open && record.output ? h('pre', { className: 'dgf-output' }, record.output) : null)
+    }
+
+    /**
      * 一个执行步骤的管线节点。
      *
      * @param props 步骤、下标、解析后的分支、状态与回调。
@@ -1293,6 +1349,15 @@ window.__ModuleLoader__.load({
             repo.current ? `当前 ${repo.current}` : '游离 HEAD',
             dirty ? ` · 已跟踪改动 ${repo.dirtyCount}` : (untracked ? '' : ' · 工作区干净'),
             untracked ? ` · 未跟踪 ${repo.untrackedCount}` : ''),
+
+          // 上次执行失败：服务端持久化，重开面板/重启应用后仍然提示。
+          h(LastFailureBanner, {
+            record: view.lastFailure ?? null,
+            open: view.failureOpen === true,
+            onToggle: view.onToggleFailure,
+            onDismiss: view.onDismissFailure,
+            onRetry: view.onRetryFailure,
+          }),
 
           // 合并停在冲突里：给出文件清单与两个出口，不用切终端也能收尾。
           repo.inProgress !== null && repo.inProgress !== undefined
@@ -1941,6 +2006,9 @@ window.__ModuleLoader__.load({
       const [restoreBranch, setRestoreBranch] = React.useState(true)
       // 待确认的执行请求：{ mode: 'all' | 'retry' | 'one', fromIndex?, index? }
       const [pending, setPending] = React.useState(null)
+      // 最近一次执行失败记录：服务端持久化，面板重开/应用重启后仍能提示。
+      const [lastFailure, setLastFailure] = React.useState(null)
+      const [failureOpen, setFailureOpen] = React.useState(false)
       // 提交对话框：是否打开、提交说明与失败原因。
       const [commitOpen, setCommitOpen] = React.useState(false)
       const [commitMessage, setCommitMessage] = React.useState('')
@@ -1976,6 +2044,18 @@ window.__ModuleLoader__.load({
           setError(data.repo && data.repo.error ? data.repo.error : null)
         } catch (err) {
           setError(explain(err))
+        }
+      }
+
+      /** 读回「上次执行失败」记录：应用重启后仍能看到上次为什么失败。 */
+      const refreshLastStep = async () => {
+        if (!sessionId) return
+        try {
+          const data = await post(ROUTE.lastStep, { sessionId })
+          const last = data.last
+          setLastFailure(last && last.ok === false ? last : null)
+        } catch {
+          // 读不到历史不影响面板主流程。
         }
       }
 
@@ -2096,6 +2176,7 @@ window.__ModuleLoader__.load({
         void (async () => {
           await refreshTemplates()
           await refreshRepo()
+          await refreshLastStep()
         })()
         // 只在会话变化时初始化一次。
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2139,7 +2220,14 @@ window.__ModuleLoader__.load({
         setStatuses(prev => ({ ...prev, [step.id]: { status: 'running', message: '' } }))
         try {
           // 同步策略随模板走；缺省 merge（分叉时自动合并远端最新）。
-          const data = await post(ROUTE.step, { sessionId, step, values, sync: template.sync ?? 'merge' })
+          const data = await post(ROUTE.step, {
+            sessionId,
+            step,
+            values,
+            sync: template.sync ?? 'merge',
+            templateName: template.name,
+            stepIndex: index,
+          })
           const outcome = data.outcome
           const status = outcome.ok ? (outcome.skipped ? 'skipped' : 'ok') : 'failed'
           setStatuses(prev => ({
@@ -2156,11 +2244,42 @@ window.__ModuleLoader__.load({
             },
           }))
           setLog(prev => [...prev, { ok: outcome.ok, text: outcome.message }])
+          // 失败记录也留在顶部横幅；服务端同时持久化，重开面板/重启后仍可见。
+          if (outcome.ok) {
+            setLastFailure(null)
+          } else {
+            setLastFailure({
+              at: new Date().toISOString(),
+              templateName: template.name,
+              stepIndex: index,
+              stepId: step.id,
+              kind: typeof outcome.kind === 'string' ? outcome.kind : step.kind,
+              source: typeof outcome.source === 'string' ? outcome.source : '',
+              target: typeof outcome.target === 'string' ? outcome.target : '',
+              ok: false,
+              skipped: outcome.skipped === true,
+              message: typeof outcome.message === 'string' ? outcome.message : '',
+              output: typeof outcome.output === 'string' ? outcome.output : '',
+            })
+          }
           return outcome
         } catch (err) {
           const message = explain(err)
           setStatuses(prev => ({ ...prev, [step.id]: { status: 'failed', message } }))
           setLog(prev => [...prev, { ok: false, text: message }])
+          setLastFailure({
+            at: new Date().toISOString(),
+            templateName: template.name,
+            stepIndex: index,
+            stepId: step.id,
+            kind: step.kind,
+            source: typeof step.source === 'string' ? step.source : '',
+            target: typeof step.target === 'string' ? step.target : '',
+            ok: false,
+            skipped: false,
+            message,
+            output: '',
+          })
           return { ok: false, message }
         }
       }
@@ -2378,6 +2497,17 @@ window.__ModuleLoader__.load({
           onRefresh: () => void refreshRepo(),
           onReloadTemplates: () => void refreshTemplates(),
           onPull: () => void pullUpdates(),
+          lastFailure,
+          failureOpen,
+          onToggleFailure: () => setFailureOpen(prev => !prev),
+          onDismissFailure: () => {
+            setLastFailure(null)
+            void post(ROUTE.clearLastStep, { sessionId }).catch(() => {})
+          },
+          onRetryFailure: () => {
+            const index = lastFailure && typeof lastFailure.stepIndex === 'number' ? lastFailure.stepIndex : -1
+            if (index >= 0 && template && template.steps[index]) setPending({ mode: 'one', index })
+          },
           commitOpen,
           commitMessage,
           commitError,
@@ -2525,7 +2655,7 @@ window.__ModuleLoader__.load({
       __test: {
         renderRun, renderEdit, post, explain, initialValues, preview, matches,
         blankTemplate, statusView, CSS, computeDerived, applyDerived, propagateDerived,
-        GitFlowPanel, BranchPicker, StepNode, parseDiff, toSplitRows, changeLabel,
+        GitFlowPanel, BranchPicker, StepNode, LastFailureBanner, parseDiff, toSplitRows, changeLabel,
       },
       apply(ctx) {
         ensureStyles()
