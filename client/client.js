@@ -959,7 +959,14 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dgf-sec' },
             h('div', { className: 'dgf-sec-head' },
               h('span', { className: 'dgf-sec-title' }, '模板'),
-              h('button', { className: 'dgf-btn', 'data-variant': 'ghost', onClick: view.onNewTemplate }, '＋ 新建')),
+              h('div', { style: { display: 'flex', gap: '4px' } },
+                h('button', {
+                  className: 'dgf-btn',
+                  'data-variant': 'ghost',
+                  title: '重新从磁盘读取模板（AI 新增模板后点这里）',
+                  onClick: view.onReloadTemplates,
+                }, '↻ 重读'),
+                h('button', { className: 'dgf-btn', 'data-variant': 'ghost', onClick: view.onNewTemplate }, '＋ 新建'))),
             h('select', {
               className: 'dgf-select',
               value: template ? template.id : '',
@@ -1376,6 +1383,12 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'dgf-sec-title' }, '模板'),
                 h('div', { style: { display: 'flex', gap: '4px' } },
                   h('button', {
+                    className: 'dgf-btn',
+                    'data-variant': 'ghost',
+                    title: '重新从磁盘读取模板（AI 新增模板后点这里）',
+                    onClick: view.onReloadTemplates,
+                  }, '↻'),
+                  h('button', {
                     className: 'dgf-btn', 'data-variant': 'primary', onClick: view.onNewTemplate,
                   }, '新建'),
                   h('button', { className: 'dgf-btn', onClick: view.onRestoreDefault }, '恢复默认'))),
@@ -1415,6 +1428,12 @@ window.__ModuleLoader__.load({
             h('div', { className: 'dgf-sec-head' },
               h('span', { className: 'dgf-sec-title' }, `模板 · ${rows.length}`),
               h('div', { style: { display: 'flex', gap: '4px' } },
+                h('button', {
+                  className: 'dgf-btn',
+                  'data-variant': 'ghost',
+                  title: '重新从磁盘读取模板（AI 新增模板后点这里）',
+                  onClick: view.onReloadTemplates,
+                }, '↻'),
                 h('button', {
                   className: 'dgf-btn', 'data-variant': 'primary', onClick: view.onNewTemplate,
                 }, '新建'),
@@ -1820,6 +1839,7 @@ window.__ModuleLoader__.load({
             else void runAll(request.fromIndex ?? 0)
           },
           onRefresh: () => void refreshRepo(),
+          onReloadTemplates: () => void refreshTemplates(),
           onPull: () => void pullUpdates(),
           onSelectTemplate: id => {
             setSelectedId(id)
@@ -1858,6 +1878,7 @@ window.__ModuleLoader__.load({
         onToggleRow: () => setCollapsed(prev => !prev),
         draftInvalid: draft && draft.invalid ? draft.invalid : null,
         onRestoreDefault: () => void restoreDefault(),
+        onReloadTemplates: () => void refreshTemplates(),
         onSelectTemplate: id => {
           const found = templates.find(item => item.id === id)
           setSelectedId(id)

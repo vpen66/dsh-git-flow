@@ -31,7 +31,7 @@ export declare const CHECKOUT_PATH = "/git-flow/checkout";
 /** 恢复内置默认模板路由。 */
 export declare const RESTORE_PATH = "/git-flow/templates/restore-default";
 /**
- * 插件入口：注册会话索引、模板存储与五条路由。
+ * 插件入口：注册会话索引、模板存储、九条路由，以及给 AI 用的模板工具与命令。
  *
  * @param ctx 插件上下文。
  */

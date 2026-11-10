@@ -9,7 +9,7 @@
  * 任何项目仓库，避免给业务仓库制造 git 噪音。
  */
 
-import { access, copyFile, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
+import { access, copyFile, mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -266,7 +266,9 @@ export function migrateTemplates(templates: WorkflowTemplate[], version: number)
  * @returns 错误说明；通过时返回 null。
  */
 export function validateTemplate(value: unknown): string | null {
-  if (typeof value !== 'object' || value === null) return '模板必须是对象'
+  // 必须是全函数：AI 工具和模板文件都会传来不可信结构，这里抛异常会让
+  // load() 的兜底 catch 把整个模板文件重写成默认模板。
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return '模板必须是对象'
   const template = value as Partial<WorkflowTemplate>
   if (typeof template.id !== 'string' || template.id === '') return '模板缺少 id'
   if (typeof template.name !== 'string' || template.name === '') return '模板缺少名称'
@@ -278,33 +280,61 @@ export function validateTemplate(value: unknown): string | null {
   }
 
   const declared = new Set<string>()
-  for (const variable of template.variables) {
+  for (const raw of template.variables) {
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return '变量必须是对象'
+    const variable = raw as Partial<TemplateVariable>
     if (typeof variable.key !== 'string' || variable.key === '') return '变量缺少 key'
+    if (declared.has(variable.key)) return `变量 ${variable.key} 重复声明`
     if (typeof variable.label !== 'string' || variable.label === '') return `变量 ${variable.key} 缺少 label`
     if (variable.kind !== 'input' && variable.kind !== 'pick') return `变量 ${variable.key} 的 kind 非法`
+    if (variable.pattern !== undefined && typeof variable.pattern !== 'string') {
+      return `变量 ${variable.key} 的 pattern 必须是字符串`
+    }
+    if (variable.default !== undefined && typeof variable.default !== 'string') {
+      return `变量 ${variable.key} 的 default 必须是字符串`
+    }
+    if (variable.derive !== undefined && variable.derive !== null) {
+      if (typeof variable.derive !== 'object' || Array.isArray(variable.derive)) {
+        return `变量 ${variable.key} 的推导规则非法`
+      }
+      const rule = variable.derive as Partial<VariableDerive>
+      if (typeof rule.from !== 'string' || rule.from === '') {
+        return `变量 ${variable.key} 的推导来源非法`
+      }
+      if (rule.take !== undefined && rule.take !== 'after-slash'
+        && rule.take !== 'last-segment' && rule.take !== 'whole') {
+        return `变量 ${variable.key} 的推导取值方式非法`
+      }
+      if (rule.prefix !== undefined && typeof rule.prefix !== 'string') {
+        return `变量 ${variable.key} 的推导前缀必须是字符串`
+      }
+    }
     declared.add(variable.key)
   }
-  for (const variable of template.variables) {
-    if (variable.derive === undefined) continue
+  for (const raw of template.variables) {
+    const variable = raw as TemplateVariable
+    // derive 允许缺省；显式 null 视为没有规则（手改文件时常见）。
+    if (variable.derive === undefined || variable.derive === null) continue
     const rule = variable.derive
     if (rule.from === variable.key) return `变量 ${variable.key} 不能从自己推导`
     if (!declared.has(rule.from)) return `变量 ${variable.key} 的推导来源 ${rule.from} 未声明`
-    if (rule.take !== undefined && rule.take !== 'after-slash'
-      && rule.take !== 'last-segment' && rule.take !== 'whole') {
-      return `变量 ${variable.key} 的推导取值方式非法`
-    }
     // 沿推导链走一圈，发现环就拒绝，避免运行期无限取值。
     let cursor: string | undefined = rule.from
     for (let hop = 0; hop < declared.size && cursor !== undefined; hop += 1) {
       if (cursor === variable.key) return `变量 ${variable.key} 的推导存在环`
-      const next: TemplateVariable | undefined = template.variables.find(item => item.key === cursor)
+      const next = template.variables.find(item => (item as TemplateVariable).key === cursor) as TemplateVariable | undefined
       cursor = next?.derive?.from
     }
   }
 
-  const keys = new Set(template.variables.map(variable => variable.key))
-  for (const step of template.steps) {
+  const keys = new Set(template.variables.map(variable => (variable as TemplateVariable).key))
+  const stepIds = new Set<string>()
+  for (const raw of template.steps) {
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return '步骤必须是对象'
+    const step = raw as Partial<WorkflowStep>
     if (typeof step.id !== 'string' || step.id === '') return '步骤缺少 id'
+    if (stepIds.has(step.id)) return `步骤 id ${step.id} 重复`
+    stepIds.add(step.id)
     if (step.kind !== 'create' && step.kind !== 'merge' && step.kind !== 'push') {
       return `步骤 ${step.id} 的 kind 非法`
     }
@@ -312,8 +342,14 @@ export function validateTemplate(value: unknown): string | null {
       return `步骤 ${step.id} 缺少 source`
     }
     if (typeof step.target !== 'string' || step.target === '') return `步骤 ${step.id} 缺少 target`
+    if (step.push !== undefined && typeof step.push !== 'boolean') {
+      return `步骤 ${step.id} 的 push 必须是布尔值`
+    }
+    if (step.note !== undefined && typeof step.note !== 'string') {
+      return `步骤 ${step.id} 的 note 必须是字符串`
+    }
     // push 步骤没有来源，只检查目标分支里引用的变量。
-    const fields = step.kind === 'push' ? [step.target] : [step.source, step.target]
+    const fields = step.kind === 'push' ? [step.target] : [step.source ?? '', step.target]
     for (const field of fields) {
       for (const name of placeholdersOf(field)) {
         if (!keys.has(name)) return `步骤 ${step.id} 引用了未声明的变量 {${name}}`
@@ -351,8 +387,20 @@ export function renderField(field: string, values: Record<string, string>): stri
 
 /** 模板存储：读、写、初始化。 */
 export class TemplateStore {
-  /** 串行化写入，避免并发保存互相覆盖。 */
+  /** 串行化模板文件的每一次读-改-写，避免并发保存互相覆盖。 */
   private queue: Promise<unknown> = Promise.resolve()
+
+  /**
+   * 把一段任务串到队列末尾；前一个任务失败也继续排队。
+   *
+   * @param task 要执行的任务。
+   * @returns 任务结果。
+   */
+  private enqueue<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(task, task)
+    this.queue = run.then(() => undefined, () => undefined)
+    return run
+  }
 
   /**
    * 读取全部模板；文件不存在时写入默认模板再返回。
@@ -360,6 +408,17 @@ export class TemplateStore {
    * @returns 模板列表。
    */
   async load(): Promise<WorkflowTemplate[]> {
+    return this.enqueue(() => this.readForWrite())
+  }
+
+  /**
+   * 读全部模板，并按需写回默认模板或迁移结果。
+   *
+   * 只在队列任务内部调用：它可能写盘，但不会再次入队，因此不会自锁。
+   *
+   * @returns 模板列表。
+   */
+  private async readForWrite(): Promise<WorkflowTemplate[]> {
     try {
       const text = await readFile(templatesPath(), 'utf8')
       const parsed: unknown = JSON.parse(text)
@@ -367,25 +426,40 @@ export class TemplateStore {
       if (Array.isArray(file.templates)) {
         // 坏条目不再直接丢弃：只剩 id 就保留并标记原因，避免下次保存把用户数据
         // 永久抹掉。只有连对象都不是的才跳过。
+        // 单条校验必须整体 try/catch：校验器一旦抛异常，外层 catch 会把整个文件
+        // 重写成默认模板（AI 工具写进来的坏数据最容易触发）。
         const usable: WorkflowTemplate[] = []
         for (const raw of file.templates) {
-          if (typeof raw !== 'object' || raw === null) continue
+          if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) continue
           const template = raw as WorkflowTemplate
           if (typeof template.id !== 'string' || template.id === '') continue
-          const invalid = validateTemplate(template)
-          usable.push(invalid === null ? template : { ...template, invalid })
+          let invalid: string | null
+          try {
+            invalid = validateTemplate(template)
+          } catch {
+            invalid = '模板结构损坏，无法校验'
+          }
+          if (invalid === null) {
+            // 校验通过：清掉历史遗留的 invalid 标记，避免修好之后永远显示"有问题"。
+            const clean = { ...template }
+            delete clean.invalid
+            usable.push(clean)
+          } else {
+            usable.push({ ...template, invalid })
+          }
         }
         const version = typeof file.version === 'number' ? file.version : 1
         if (version >= TEMPLATE_FILE_VERSION) return usable
         // 旧文件升级一次并写回，避免每次读都迁移。
         const upgraded = migrateTemplates(usable, version)
-        await this.save(upgraded)
+        await this.writeNow(upgraded)
         return upgraded
       }
       return [defaultReleaseTemplate()]
     } catch {
+      // 解析失败或读不到文件：种入默认模板；旧文件由 writeNow 里的备份保留。
       const seeded = [defaultReleaseTemplate()]
-      await this.save(seeded)
+      await this.writeNow(seeded)
       return seeded
     }
   }
@@ -396,16 +470,31 @@ export class TemplateStore {
    * @param templates 模板列表。
    */
   async save(templates: WorkflowTemplate[]): Promise<void> {
-    const run = async (): Promise<void> => {
-      // 覆盖前先留一份，防止误删/误改无回退。
-      await backupTemplates()
-      const path = templatesPath()
-      await mkdir(dirname(path), { recursive: true })
-      const file: TemplateFile = { version: TEMPLATE_FILE_VERSION, templates }
-      await writeFile(path, `${JSON.stringify(file, null, 2)}\n`, 'utf8')
+    await this.enqueue(() => this.writeNow(templates))
+  }
+
+  /**
+   * 原子写入模板文件：先写临时文件再 rename。
+   *
+   * 直接覆盖时若进程崩溃会留下截断 JSON，下一次 load() 只能靠备份找回。
+   *
+   * @param templates 模板列表。
+   */
+  private async writeNow(templates: WorkflowTemplate[]): Promise<void> {
+    // 覆盖前先留一份，防止误删/误改无回退。
+    await backupTemplates()
+    const path = templatesPath()
+    await mkdir(dirname(path), { recursive: true })
+    const file: TemplateFile = { version: TEMPLATE_FILE_VERSION, templates }
+    const temp = `${path}.tmp-${process.pid}-${Date.now().toString(36)}`
+    try {
+      await writeFile(temp, `${JSON.stringify(file, null, 2)}\n`, 'utf8')
+      await rename(temp, path)
+    } catch (error) {
+      // 写失败时清掉临时文件，别在用户目录留下垃圾。
+      await unlink(temp).catch(() => {})
+      throw error
     }
-    this.queue = this.queue.then(run, run)
-    await this.queue
   }
 
   /**
@@ -415,12 +504,17 @@ export class TemplateStore {
    * @returns 保存后的全部模板。
    */
   async upsert(template: WorkflowTemplate): Promise<WorkflowTemplate[]> {
-    const templates = await this.load()
-    const index = templates.findIndex(item => item.id === template.id)
-    if (index === -1) templates.push(template)
-    else templates[index] = template
-    await this.save(templates)
-    return templates
+    return this.enqueue(async () => {
+      const templates = await this.readForWrite()
+      // invalid 是读取时补的诊断字段，由服务端管理，永远不写回文件。
+      const clean = { ...template }
+      delete clean.invalid
+      const index = templates.findIndex(item => item.id === clean.id)
+      if (index === -1) templates.push(clean)
+      else templates[index] = clean
+      await this.writeNow(templates)
+      return templates
+    })
   }
 
   /**
@@ -429,13 +523,15 @@ export class TemplateStore {
    * @returns 恢复后的全部模板，以及这次是否真的补上了。
    */
   async ensureDefault(): Promise<{ templates: WorkflowTemplate[]; restored: boolean }> {
-    const templates = await this.load()
-    if (templates.some(template => template.id === 'release-default')) {
-      return { templates, restored: false }
-    }
-    const next = [defaultReleaseTemplate(), ...templates]
-    await this.save(next)
-    return { templates: next, restored: true }
+    return this.enqueue(async () => {
+      const templates = await this.readForWrite()
+      if (templates.some(template => template.id === 'release-default')) {
+        return { templates, restored: false }
+      }
+      const next = [defaultReleaseTemplate(), ...templates]
+      await this.writeNow(next)
+      return { templates: next, restored: true }
+    })
   }
 
   /**
@@ -445,8 +541,10 @@ export class TemplateStore {
    * @returns 删除后的全部模板。
    */
   async remove(id: string): Promise<WorkflowTemplate[]> {
-    const templates = (await this.load()).filter(item => item.id !== id)
-    await this.save(templates)
-    return templates
+    return this.enqueue(async () => {
+      const templates = (await this.readForWrite()).filter(item => item.id !== id)
+      await this.writeNow(templates)
+      return templates
+    })
   }
 }

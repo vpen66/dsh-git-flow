@@ -75,6 +75,20 @@ DeepSeek Harness 插件：**自定义 Git 工作流模板**。把「从哪个分
   仍允许直接手填本次要新建、暂时不存在的分支（如 `release/1.0.6`）
 - 按默认值实时预览每一步会变成什么分支
 - 保存到 `~/.dsh/git-flow/templates.json`
+- 模板区右上角的「↻ 重读」随时从磁盘重读模板（AI 保存新模板后点它即可，不用重开面板）
+
+## AI 集成：`/add-template` 与模板工具
+
+除了手动编辑，也可以直接让 AI 建模板：
+
+- 在对话框输入 `/add-template <需求>`（`/` 菜单里自动出现）。命令会把需求交给当前会话的 AI，
+  AI 先只读地查看仓库分支、列出模板摘要和你确认，然后调用工具保存。
+- AI 可用的工具：
+  - `git_flow_add_template`：新增/更新模板。保存前跑与面板相同的校验；`id` 已存在时默认拒绝覆盖，
+    需显式传 `overwrite: true`；写入走串行读-改-写 + 临时文件 + rename，失败不会留下截断的 JSON。
+  - `git_flow_list_templates`：列出已保存模板（id、变量、步骤、无效原因），便于新增前先看现状。
+- 工具与面板共用同一份模板存储和同一套校验，因此 AI 写坏数据不会波及已有模板。
+- 这些是服务端能力：**改代码后必须重启 DeepSeek Harness 才会出现命令与工具**（客户端改动热更新，服务端不会）。
 
 ## 设计要点
 
@@ -124,10 +138,12 @@ dsh plugin --profile desktop remove dsh-git-flow
 
 | 路径 | 作用 |
 | --- | --- |
-| `src/templates.ts` | 模板类型、校验、默认模板、JSON 持久化 |
+| `src/templates.ts` | 模板类型、校验、默认模板、JSON 持久化（串行读-改-写 + 原子写 + 备份） |
 | `src/git.ts` | 仓库读取与分支原语（建/合/推），接收显式 cwd |
 | `src/workflow.ts` | 单步执行：变量解析 + 前置检查 + 调 git |
-| `src/index.ts` | 服务端：会话工作目录解析 + 五条 web 路由 |
+| `src/tools.ts` | AI 工具：`git_flow_add_template` / `git_flow_list_templates` |
+| `src/command.ts` | `/add-template` 命令：把需求交给当前会话的 AI |
+| `src/index.ts` | 服务端：会话工作目录解析 + 九条 web 路由 + AI 工具/命令注册 |
 | `client/client.js` | 浏览器半侧：手写 lazy-CJS bundle，两个页签的界面 |
 | `cordis.patch.yml` | 组合补丁 |
 
@@ -165,7 +181,8 @@ dsh --profile <测试名> --no-open --port 61899
 
 - 同一时刻只执行一个模板的一次运行，没有历史记录与并发保护。
 - 模板是全局的（跨仓库共享），按分支名匹配；不同仓库分支命名差异大时需要建多个模板。
-- 不做 rebase、不做 cherry-pick、不自动解决冲突。
+- 不做 cherry-pick、不自动解决冲突；`rebase` 只用于「分叉时」同步远端，不会把 rebase 当成合并步骤。
+- AI 工具和 `/add-template` 是 profile 级注册：同一 profile 的所有会话都能调用，写入的是跨仓库共享的模板文件。
 
 ## 合并冲突怎么处理
 
