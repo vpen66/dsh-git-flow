@@ -220,6 +220,10 @@ window.__ModuleLoader__.load({
 .dgf-note{font-size:10px; color:var(--dgf-dim)}
 .dgf-result{font-size:10.5px; color:var(--dgf-dim); line-height:1.45; word-break:break-word}
 .dgf-result[data-status=failed]{color:#ffb3c0}
+.dgf-output{margin:0; max-height:180px; overflow:auto; white-space:pre-wrap; word-break:break-word;
+  font-family:var(--dsh-font-family-code-default,ui-monospace,Menlo,monospace); font-size:10px;
+  line-height:1.5; color:var(--dgf-dim); background:rgba(6,10,16,.35);
+  border:1px solid color-mix(in srgb, var(--dgf-line) 70%, transparent); border-radius:8px; padding:6px 8px}
 .dgf-resume{font-size:10.5px; line-height:1.5; color:#a5f3fc; background:rgba(34,211,238,.08);
   border:1px solid rgba(34,211,238,.28); border-radius:7px; padding:5px 7px}
 
@@ -1073,6 +1077,10 @@ window.__ModuleLoader__.load({
       const { step, index, source, target, status, busy } = props
       const view = statusView(status ? status.status : 'todo')
       const state = status ? status.status : 'todo'
+      const output = status && typeof status.output === 'string' ? status.output : ''
+      // 默认展开失败步骤的原始输出：推送/拉取失败的真实原因都在这里。
+      const [detail, setDetail] = React.useState(null)
+      const showOutput = output !== '' && (detail === null ? state === 'failed' : detail)
       return h('div', { className: 'dgf-node-row' },
         h('span', { className: 'dgf-rail' }),
         h('span', { className: 'dgf-node', 'data-status': state }, String(index + 1)),
@@ -1105,6 +1113,17 @@ window.__ModuleLoader__.load({
           status && Array.isArray(status.conflicts) && status.conflicts.length > 0
             ? h('div', { className: 'dgf-conflict-files' },
               status.conflicts.map(file => h('div', { key: file, className: 'dgf-conflict-file' }, file)))
+            : null,
+          output !== ''
+            ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: '5px' } },
+              h('button', {
+                className: 'dgf-btn',
+                'data-variant': 'ghost',
+                style: { alignSelf: 'flex-start' },
+                title: '展开这一步的 git 原始输出',
+                onClick: () => setDetail(!showOutput),
+              }, showOutput ? '收起详情' : '查看详情'),
+              showOutput ? h('pre', { className: 'dgf-output' }, output) : null)
             : null,
           // 冲突在外部解决并提交后，合并/变基已经结束，横幅会消失；
           // 这里明确告诉用户"接着点执行就行"，否则会以为流程断了。
@@ -2131,6 +2150,9 @@ window.__ModuleLoader__.load({
               ...(Array.isArray(outcome.conflicts) && outcome.conflicts.length > 0
                 ? { conflicts: outcome.conflicts }
                 : {}),
+              ...(typeof outcome.output === 'string' && outcome.output !== ''
+                ? { output: outcome.output }
+                : {}),
             },
           }))
           setLog(prev => [...prev, { ok: outcome.ok, text: outcome.message }])
@@ -2503,7 +2525,7 @@ window.__ModuleLoader__.load({
       __test: {
         renderRun, renderEdit, post, explain, initialValues, preview, matches,
         blankTemplate, statusView, CSS, computeDerived, applyDerived, propagateDerived,
-        GitFlowPanel, BranchPicker, parseDiff, toSplitRows, changeLabel,
+        GitFlowPanel, BranchPicker, StepNode, parseDiff, toSplitRows, changeLabel,
       },
       apply(ctx) {
         ensureStyles()

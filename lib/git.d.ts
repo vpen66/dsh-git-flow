@@ -46,6 +46,15 @@ export interface RepoInfo {
     error: string | null;
 }
 /**
+ * 把常见 git 失败翻译成中文原因与可执行建议。
+ *
+ * 只做展示：不改变成功与否，原始 stderr 仍完整放在 `GitResult.output` 里。
+ *
+ * @param output git 的原始错误输出。
+ * @returns 说明；没有命中已知模式时返回 null。
+ */
+export declare function explainGitFailure(output: string): string | null;
+/**
  * 本地分支是否存在。
  *
  * @param cwd 仓库目录。
