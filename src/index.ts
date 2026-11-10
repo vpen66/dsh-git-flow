@@ -1,13 +1,15 @@
 /**
- * 服务端半侧：给工作流面板提供仓库状态、模板存取和单步执行。
+ * 服务端半侧：给工作流面板提供仓库状态、指令存取和单步执行。
  *
  * 面板是会话级的侧边栏标签页，浏览器侧发四类请求：
  * - `POST /git-flow/repo`：读会话工作目录的仓库状态（只读）。
- * - `POST /git-flow/templates` / `/save` / `/delete`：模板的读与改。
- * - `POST /git-flow/step`：执行模板中的一步。
+ * - `POST /git-flow/templates` / `/save` / `/delete`：指令的读与改。
+ * - `POST /git-flow/step`：执行指令中的一步。
  * - `POST /git-flow/commit`：提交工作区里的改动（提交信息与勾选的文件由面板传入）。
  * - `POST /git-flow/changes`：列出工作区里的改动文件（提交弹层的勾选列表）。
  * - `POST /git-flow/diff`：读取单个改动文件的对比 diff（提交弹层的 diff 预览）。
+ * - `POST /git-flow/switch-branch`：切换当前分支（本地没有但远端存在时按需创建）。
+ * - `POST /git-flow/graph`：读取提交图（只读）。
  *
  * 仓库路径来自会话自身的 `header.cwd`，不接受请求体传入的任意路径，因此浏览器
  * 侧无法借这个面板操作会话工作目录之外的仓库。
@@ -21,6 +23,8 @@ import {
   abortMerge,
   continueMerge,
   checkoutBranch,
+  switchBranch,
+  readCommitGraph,
   fetchRemote,
   commitWorkspace,
   listChanges,
@@ -39,11 +43,11 @@ export const inject = ['sessions']
 
 /** 仓库状态路由。 */
 export const REPO_PATH = '/git-flow/repo'
-/** 模板读取路由。 */
+/** 指令读取路由。 */
 export const TEMPLATES_PATH = '/git-flow/templates'
-/** 模板保存路由。 */
+/** 指令保存路由。 */
 export const SAVE_PATH = '/git-flow/templates/save'
-/** 模板删除路由。 */
+/** 指令删除路由。 */
 export const DELETE_PATH = '/git-flow/templates/delete'
 /** 单步执行路由。 */
 export const STEP_PATH = '/git-flow/step'
@@ -63,7 +67,11 @@ export const CHANGES_PATH = '/git-flow/changes'
 export const DIFF_PATH = '/git-flow/diff'
 /** 切回指定分支的路由。 */
 export const CHECKOUT_PATH = '/git-flow/checkout'
-/** 恢复内置默认模板路由。 */
+/** 切换当前分支的路由。 */
+export const SWITCH_PATH = '/git-flow/switch-branch'
+/** 提交图路由。 */
+export const GRAPH_PATH = '/git-flow/graph'
+/** 恢复内置默认指令路由。 */
 export const RESTORE_PATH = '/git-flow/templates/restore-default'
 
 /** 请求体上限；面板的请求都是小 JSON。 */
@@ -184,9 +192,11 @@ function parseStep(value: unknown): WorkflowStep | null {
   if (typeof value !== 'object' || value === null) return null
   const step = value as Partial<WorkflowStep>
   if (typeof step.id !== 'string' || step.id === '') return null
-  if (step.kind !== 'create' && step.kind !== 'merge' && step.kind !== 'push' && step.kind !== 'tag') return null
-  // push 步骤没有来源，其余类型必须有。
-  if (step.kind !== 'push' && (typeof step.source !== 'string' || step.source === '')) return null
+  if (step.kind !== 'create' && step.kind !== 'merge' && step.kind !== 'push' && step.kind !== 'tag'
+    && step.kind !== 'pull' && step.kind !== 'commit') return null
+  // 只有 create / merge / tag 需要来源；push / pull / commit 的 source 可以是空串。
+  const needsSource = step.kind === 'create' || step.kind === 'merge' || step.kind === 'tag'
+  if (needsSource && (typeof step.source !== 'string' || step.source === '')) return null
   if (typeof step.target !== 'string' || step.target === '') return null
   const parsed: WorkflowStep = {
     id: step.id,
@@ -224,11 +234,12 @@ const NO_REPO: RepoInfo = {
   untrackedCount: 0,
   conflicts: [],
   branches: [],
+  remoteBranches: [],
   error: '未找到该会话的工作目录',
 }
 
 /**
- * 插件入口：注册会话索引、模板存储、十二条路由，以及给 AI 用的模板工具与命令。
+ * 插件入口：注册会话索引、指令存储、十六条路由，以及给 AI 用的指令工具与命令。
  *
  * @param ctx 插件上下文。
  */
@@ -238,7 +249,7 @@ export function apply(ctx: Context): void {
   // 会话 id → 工作目录。路由只能操作这些目录，请求体里的路径一律不采信。
   const workspaces = new Map<string, string>()
 
-  // AI 集成：注册模板工具与 `/add-template` 命令。都走嵌套注入并容忍服务缺席——
+  // AI 集成：注册指令工具与 `/add-template` 命令。都走嵌套注入并容忍服务缺席——
   // 没有 commands/tools 的 profile（例如 CLI）里，右栏面板照常工作。
   ctx.inject(['tools'], (toolsCtx: Context) => {
     const tools = Reflect.get(toolsCtx, 'tools') as unknown
@@ -327,22 +338,22 @@ export function apply(ctx: Context): void {
       return { repo: await readRepo(cwd) }
     })
 
-    // 模板读取；首次调用会在磁盘上种入默认模板。
+    // 指令读取；首次调用会在磁盘上种入默认指令。
     route(TEMPLATES_PATH, async () => {
       return { templates: await store.load() }
     })
 
-    // 模板保存（新增或覆盖同 id 的模板）。
+    // 指令保存（新增或覆盖同 id 的指令）。
     route(SAVE_PATH, async (body) => {
       const invalid = validateTemplate(body.template)
       if (invalid !== null) return { templates: await store.load(), error: invalid }
       return { templates: await store.upsert(body.template as WorkflowTemplate) }
     })
 
-    // 模板删除。
+    // 指令删除。
     route(DELETE_PATH, async (body) => {
       const id = typeof body.id === 'string' ? body.id : ''
-      if (id === '') return { templates: await store.load(), error: '缺少模板 id' }
+      if (id === '') return { templates: await store.load(), error: '缺少指令 id' }
       return { templates: await store.remove(id) }
     })
 
@@ -389,7 +400,25 @@ export function apply(ctx: Context): void {
       return { result: await checkoutBranch(cwd, branch) }
     })
 
-    // 把被删掉的内置默认模板加回来。
+    // 切换当前分支：本地没有但远端存在时按需创建本地跟踪分支。
+    route(SWITCH_PATH, async (body) => {
+      const cwd = repoOf(body)
+      if (cwd === undefined) return { result: { ok: false, message: '未找到该会话的工作目录', output: '' } }
+      const branch = typeof body.branch === 'string' ? body.branch : ''
+      return { result: await switchBranch(cwd, branch) }
+    })
+
+    // 提交图：只读 `git log --all`，供面板画分叉/合并线。
+    route(GRAPH_PATH, async (body) => {
+      const cwd = repoOf(body)
+      if (cwd === undefined) {
+        return { graph: { commits: [], current: '', head: '', error: '未找到该会话的工作目录' } }
+      }
+      const limit = typeof body.limit === 'number' && Number.isFinite(body.limit) ? body.limit : 80
+      return { graph: await readCommitGraph(cwd, limit) }
+    })
+
+    // 把被删掉的内置默认指令加回来。
     route(RESTORE_PATH, async () => {
       const { templates, restored } = await store.ensureDefault()
       return { templates, restored }
@@ -417,7 +446,7 @@ export function apply(ctx: Context): void {
       if (cwd === undefined) return { outcome: empty }
       const step = parseStep(body.step)
       if (step === null) return { outcome: { ...empty, message: '步骤定义非法' } }
-      // 同步策略由模板带上来；缺省用 merge（分叉时自动合并远端最新）。
+      // 同步策略由指令带上来；缺省用 merge（分叉时自动合并远端最新）。
       const sync: SyncMode = body.sync === 'ff' || body.sync === 'rebase'
         ? body.sync
         : 'merge'

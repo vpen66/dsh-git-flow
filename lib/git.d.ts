@@ -2,7 +2,7 @@
  * Git 读取与分支操作。
  *
  * 这里只提供与具体流程无关的原语：读仓库状态、列分支、建分支、合并、推送。
- * 「先合谁再合谁」由模板决定，见 `workflow.ts`。所有函数都接收显式的 `cwd`，
+ * 「先合谁再合谁」由指令决定，见 `workflow.ts`。所有函数都接收显式的 `cwd`，
  * 自身不持有状态，便于测试。
  */
 /** 一次操作的结果；失败不抛异常，便于界面逐条展示。 */
@@ -42,6 +42,8 @@ export interface RepoInfo {
     /** 当前未解决的冲突文件；没有冲突时为空数组。 */
     conflicts: string[];
     branches: BranchInfo[];
+    /** 远端存在但本地没有同名分支的分支名（不含 `origin/` 前缀，已排除 HEAD 符号引用）；切分支时按需创建本地跟踪分支。 */
+    remoteBranches: string[];
     /** 读取失败原因；成功为 null。 */
     error: string | null;
 }
@@ -85,6 +87,42 @@ export declare function conflictedFiles(cwd: string): Promise<string[]>;
  * @returns 仓库状态；非仓库时 `isRepo` 为 false。
  */
 export declare function readRepo(cwd: string): Promise<RepoInfo>;
+/** 提交图里的一条提交。 */
+export interface GraphCommit {
+    /** 完整提交哈希。 */
+    hash: string;
+    /** 父提交哈希；根提交为空数组，合并提交有多个。 */
+    parents: string[];
+    /** 作者名。 */
+    author: string;
+    /** 作者时间（Unix 秒）。 */
+    at: number;
+    /** 提交标题。 */
+    subject: string;
+    /** 指向这条提交的引用（`HEAD -> x`、分支、`origin/x`、`tag: x`）。 */
+    refs: string[];
+}
+/** 提交图数据。 */
+export interface CommitGraph {
+    commits: GraphCommit[];
+    /** 当前分支；游离 HEAD 时为 HEAD。 */
+    current: string;
+    /** HEAD 指向的提交；没有提交时为空串。 */
+    head: string;
+    /** 读取失败原因；成功为 null。 */
+    error: string | null;
+}
+/**
+ * 读取提交图：一次 `git log --all`，带上父提交、作者、时间与引用。
+ *
+ * 只读：不 fetch、不切换分支、不改工作区。按 `--topo-order` 返回，保证父提交在子提交之后，
+ * 前端可以据此画分叉/合并线。
+ *
+ * @param cwd 仓库目录。
+ * @param limit 最多返回多少条提交（默认 80，上限 200）。
+ * @returns 提交图数据；非仓库或读取失败时 error 有值。
+ */
+export declare function readCommitGraph(cwd: string, limit?: number): Promise<CommitGraph>;
 /** 工作区里的一处改动。 */
 export interface FileChange {
     /** 相对仓库根的路径。 */
@@ -235,6 +273,33 @@ export declare function continueMerge(cwd: string): Promise<GitResult>;
  * @returns 执行结果。
  */
 export declare function checkoutBranch(cwd: string, branch: string): Promise<GitResult>;
+/**
+ * 切换到指定分支；本地没有但远端 origin 有该分支时，按需创建本地跟踪分支。
+ *
+ * 只在安全时切换：合并/变基未完成、已跟踪文件有改动时一律拒绝，避免把工作区
+ * 带进更糟的状态。分支名以 `-` 开头时直接拒绝，防止被 git 当成选项。
+ *
+ * @param cwd 仓库目录（可以是仓库子目录）。
+ * @param branch 目标分支名。
+ * @returns 执行结果。
+ */
+export declare function switchBranch(cwd: string, branch: string): Promise<GitResult>;
+/**
+ * 把一个本地分支更新到远端最新；本地没有但远端有同名分支时先创建跟踪分支。
+ *
+ * 与 `syncBranch` 的区别：这里负责「准备分支」——先 fetch，按需创建本地跟踪分支，
+ * 并允许本地没有同名远端分支（视为跳过）。工作区有改动不阻塞拉取：快进/更新引用
+ * 本身可以带着改动完成，只有改动与远端更新冲突、或需要切换/变基时 git 才会拒绝，
+ * 那时给出「先提交或 stash」的提示。
+ *
+ * @param cwd 仓库目录。
+ * @param branch 分支名。
+ * @param mode 同步策略，默认 ff。
+ * @returns 执行结果；跳过时 `skipped` 为 true。
+ */
+export declare function pullBranch(cwd: string, branch: string, mode?: SyncMode): Promise<GitResult & {
+    skipped?: boolean;
+}>;
 /** 分支与远端的关系。 */
 export interface SyncResult {
     ok: boolean;

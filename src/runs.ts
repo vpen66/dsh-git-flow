@@ -20,7 +20,7 @@ export interface LastStepRecord {
   at: string
   /** 仓库工作目录（与面板请求里的会话目录一致）。 */
   repoRoot: string
-  /** 模板名，方便横幅显示。 */
+  /** 指令名，方便横幅显示。 */
   templateName?: string
   /** 步骤下标（0 开始）。 */
   stepIndex?: number
