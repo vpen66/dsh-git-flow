@@ -41,6 +41,8 @@ window.__ModuleLoader__.load({
       checkout: 'git-flow/checkout',
       fetch: 'git-flow/fetch',
       commit: 'git-flow/commit',
+      changes: 'git-flow/changes',
+      diff: 'git-flow/diff',
     }
 
     /**
@@ -335,6 +337,53 @@ window.__ModuleLoader__.load({
 .dgf-commit-input:focus{outline:none; border-color:rgba(34,211,238,.7);
   box-shadow:0 0 0 2px rgba(34,211,238,.16)}
 .dgf-commit-input::placeholder{color:var(--dgf-dim); opacity:.7}
+/* 提交弹层的文件勾选列表 */
+.dgf-files{display:flex; flex-direction:column; gap:1px; max-height:190px; overflow-y:auto; padding:4px;
+  border-radius:8px; background:rgba(120,180,255,.05);
+  border:1px solid color-mix(in srgb, var(--dgf-line) 65%, transparent)}
+.dgf-file{display:flex; align-items:center; gap:4px; padding:2px 3px; border-radius:6px}
+.dgf-file:hover{background:rgba(34,211,238,.08)}
+.dgf-file-main{flex:1; min-width:0; display:flex; align-items:center; gap:7px; cursor:pointer;
+  font-size:11px; color:var(--dgf-text); padding:1px 2px}
+.dgf-file input{accent-color:#22d3ee; margin:0; flex:none; cursor:pointer}
+.dgf-file-diff{appearance:none; flex:none; cursor:pointer; font-family:var(--dsh-font-family-code-default,monospace);
+  font-size:9px; padding:1px 6px; border-radius:5px; border:1px solid var(--dgf-line);
+  color:var(--dgf-dim); background:transparent; transition:color .14s, border-color .14s}
+.dgf-file-diff:hover:not(:disabled){color:#bff4ff; border-color:rgba(34,211,238,.5)}
+/* 单文件 diff 预览：统一视图是「旧行号 新行号 内容」，并排视图左右各一列 */
+.dgf-diff-head{display:flex; align-items:center; gap:6px; min-width:0}
+.dgf-diff-title{overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0}
+.dgf-diff{display:flex; flex-direction:column; max-height:320px; overflow:auto; border-radius:8px;
+  border:1px solid color-mix(in srgb, var(--dgf-line) 65%, transparent);
+  background:color-mix(in srgb, var(--dsw-alias-bg-base,#0a0e14) 75%, transparent);
+  font-family:var(--dsh-font-family-code-default,ui-monospace,Menlo,monospace);
+  font-size:10.5px; line-height:1.5; tab-size:2}
+.dgf-diff-row{display:grid; grid-template-columns:38px 38px minmax(0,1fr); align-items:stretch}
+.dgf-diff-row[data-kind=hunk],.dgf-diff-row[data-kind=meta]{grid-template-columns:minmax(0,1fr);
+  padding:2px 7px; color:var(--dgf-cyan)}
+.dgf-diff-row[data-kind=meta]{color:var(--dgf-dim)}
+.dgf-diff-row[data-kind=add]{background:rgba(52,211,153,.10)}
+.dgf-diff-row[data-kind=del]{background:rgba(251,113,133,.12)}
+.dgf-diff-ln{color:var(--dgf-dim); text-align:right; padding:0 6px; user-select:none;
+  font-variant-numeric:tabular-nums; white-space:nowrap; background:rgba(0,0,0,.14);
+  border-right:1px solid color-mix(in srgb, var(--dgf-line) 55%, transparent)}
+.dgf-diff-code{white-space:pre; padding:0 7px; color:var(--dgf-text)}
+.dgf-diff-row[data-kind=add] .dgf-diff-code{color:#86efac}
+.dgf-diff-row[data-kind=del] .dgf-diff-code{color:#fda4af}
+.dgf-diff-row-split{grid-template-columns:38px minmax(0,1fr) 38px minmax(0,1fr)}
+/* 并排时每列都很窄，超长行先裁掉，避免盖住右侧那一列；要看全文切回统一视图 */
+.dgf-diff-row-split .dgf-diff-code{overflow:hidden; border-right:1px solid rgba(120,180,255,.14)}
+.dgf-diff-row-split .dgf-diff-code:last-child{border-right:0}
+.dgf-diff-add{color:#86efac; background:rgba(52,211,153,.10)}
+.dgf-diff-del{color:#fda4af; background:rgba(251,113,133,.12)}
+.dgf-file-badge{flex:none; width:38px; text-align:center; font-size:9px; letter-spacing:.06em;
+  padding:1px 0; border-radius:4px; border:1px solid var(--dgf-line); color:var(--dgf-dim)}
+.dgf-file-badge[data-status=A]{color:var(--dgf-green); border-color:rgba(52,211,153,.5)}
+.dgf-file-badge[data-status=D]{color:var(--dgf-red); border-color:rgba(251,113,133,.5)}
+.dgf-file-badge[data-status=?]{color:#a5f3fc; border-color:rgba(34,211,238,.45)}
+.dgf-file-badge[data-status=M]{color:var(--dgf-amber); border-color:rgba(251,191,36,.45)}
+.dgf-file-path{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  font-family:var(--dsh-font-family-code-default,ui-monospace,Menlo,monospace); font-size:10.5px}
 
 .dgf-toggle{display:flex; align-items:center; gap:6px; font-size:10.5px; color:var(--dgf-dim);
   cursor:pointer; padding:2px 0; user-select:none}
@@ -619,6 +668,205 @@ window.__ModuleLoader__.load({
       if (status === 'running') return { text: '执行中', tone: 'run' }
       if (status === 'failed') return { text: '失败', tone: 'fail' }
       return { text: '待执行', tone: '' }
+    }
+
+    /**
+     * 改动类型 → 中文徽标。
+     *
+     * @param status 文件列表接口返回的改动类型（M/A/D/?）。
+     * @returns 徽标文本。
+     */
+    function changeLabel(status) {
+      if (status === 'A') return '新增'
+      if (status === 'D') return '删除'
+      if (status === '?') return '未跟踪'
+      return '修改'
+    }
+
+    /** 统一 diff 的文件头前缀；逐行解析前先跳过，避免把 `--- a/x` 当成删除行。 */
+    const DIFF_HEADER_PREFIXES = [
+      'diff --git ', 'index ', 'new file mode ', 'deleted file mode ', 'old mode ', 'new mode ',
+      'similarity index ', 'dissimilarity index ', 'rename from ', 'rename to ', 'copy from ', 'copy to ',
+      '--- ', '+++ ',
+    ]
+
+    /**
+     * 解析统一 diff 文本，并算出每行对应的新旧行号。
+     *
+     * hunk 头之前的文件头（`diff --git`、`index`、`---/+++` 等）跳过不展示；
+     * hunk 里以 `\` 开头的是「文件末尾没有换行」的提示，作为 meta 行显示。
+     *
+     * @param patch 统一 diff 文本。
+     * @returns 行数组；每行有 type，内容行为 add/del/ctx 并带 oldNo/newNo。
+     */
+    function parseDiff(patch) {
+      const rows = []
+      let oldNo = 0
+      let newNo = 0
+      let inHunk = false
+      for (const line of String(patch ?? '').split('\n')) {
+        if (line === '') continue
+        if (!inHunk && DIFF_HEADER_PREFIXES.some(prefix => line.startsWith(prefix))) continue
+        if (line.startsWith('@@')) {
+          const match = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line)
+          oldNo = match === null ? 0 : Number.parseInt(match[1], 10)
+          newNo = match === null ? 0 : Number.parseInt(match[2], 10)
+          inHunk = true
+          rows.push({ key: rows.length, type: 'hunk', text: line })
+          continue
+        }
+        const marker = line.charAt(0)
+        if (marker === '+') {
+          rows.push({ key: rows.length, type: 'add', oldNo: null, newNo, text: line.slice(1) })
+          newNo += 1
+        } else if (marker === '-') {
+          rows.push({ key: rows.length, type: 'del', oldNo, newNo: null, text: line.slice(1) })
+          oldNo += 1
+        } else if (marker === ' ') {
+          rows.push({ key: rows.length, type: 'ctx', oldNo, newNo, text: line.slice(1) })
+          oldNo += 1
+          newNo += 1
+        } else {
+          rows.push({ key: rows.length, type: 'meta', text: line })
+        }
+      }
+      return rows
+    }
+
+    /**
+     * 把统一 diff 的行配对成并排视图的两列：连续的删除与新增左右对齐。
+     *
+     * @param rows parseDiff 的结果。
+     * @returns 并排行；内容行是 pair（left/right 可能为 null），其余原样保留。
+     */
+    function toSplitRows(rows) {
+      const out = []
+      let deletions = []
+      let additions = []
+      /** 把积攒的删除/新增按顺序配对输出。 */
+      const flush = () => {
+        const count = Math.max(deletions.length, additions.length)
+        for (let index = 0; index < count; index += 1) {
+          out.push({
+            key: out.length,
+            type: 'pair',
+            left: deletions[index] ?? null,
+            right: additions[index] ?? null,
+          })
+        }
+        deletions = []
+        additions = []
+      }
+      for (const row of rows) {
+        if (row.type === 'del') { deletions.push(row); continue }
+        if (row.type === 'add') { additions.push(row); continue }
+        flush()
+        out.push({ ...row, key: out.length })
+      }
+      flush()
+      return out
+    }
+
+    /**
+     * 统一 diff 的一行：旧行号、新行号、内容。
+     *
+     * @param props `row` 为 parseDiff 的一行。
+     * @returns React 节点。
+     */
+    function DiffUnifiedRow(props) {
+      const row = props.row
+      if (row.type === 'hunk' || row.type === 'meta') {
+        return h('div', { className: 'dgf-diff-row', 'data-kind': row.type },
+          h('span', { className: 'dgf-diff-code' }, row.text))
+      }
+      const marker = row.type === 'add' ? '+' : row.type === 'del' ? '-' : ' '
+      return h('div', { className: 'dgf-diff-row', 'data-kind': row.type },
+        h('span', { className: 'dgf-diff-ln' }, row.oldNo === null ? '' : String(row.oldNo)),
+        h('span', { className: 'dgf-diff-ln' }, row.newNo === null ? '' : String(row.newNo)),
+        h('span', { className: 'dgf-diff-code' }, `${marker}${row.text}`))
+    }
+
+    /**
+     * 并排 diff 的一行：左列旧版本、右列新版本。
+     *
+     * @param props `row` 为 toSplitRows 的一行。
+     * @returns React 节点。
+     */
+    function DiffSplitRow(props) {
+      const row = props.row
+      if (row.type === 'hunk' || row.type === 'meta') {
+        return h('div', { className: 'dgf-diff-row dgf-diff-row-split', 'data-kind': row.type },
+          h('span', { className: 'dgf-diff-code' }, row.text))
+      }
+      const left = row.type === 'pair' ? row.left : row
+      const right = row.type === 'pair' ? row.right : row
+      const leftMarker = left !== null && left.type === 'del' ? '-' : ' '
+      const rightMarker = right !== null && right.type === 'add' ? '+' : ' '
+      return h('div', { className: 'dgf-diff-row dgf-diff-row-split', 'data-kind': row.type },
+        h('span', { className: 'dgf-diff-ln' }, left === null ? '' : String(left.oldNo)),
+        h('span', {
+          className: `dgf-diff-code${left !== null && left.type === 'del' ? ' dgf-diff-del' : ''}`,
+        }, left === null ? '' : `${leftMarker}${left.text}`),
+        h('span', { className: 'dgf-diff-ln' }, right === null ? '' : String(right.newNo)),
+        h('span', {
+          className: `dgf-diff-code${right !== null && right.type === 'add' ? ' dgf-diff-add' : ''}`,
+        }, right === null ? '' : `${rightMarker}${right.text}`))
+    }
+
+    /**
+     * 提交弹层里的单文件 diff 预览。纯函数。
+     *
+     * @param view 状态与回调（diffPath/diffData/diffError/diffLoading/diffMode 与回调）。
+     * @param busy 是否正在执行其它操作。
+     * @returns React 节点数组。
+     */
+    function renderDiffBlock(view, busy) {
+      const diff = view.diffData ?? null
+      const unifiedRows = diff === null ? [] : parseDiff(diff.patch)
+      const splitRows = diff === null ? [] : toSplitRows(unifiedRows)
+      const mode = view.diffMode === 'split' ? 'split' : 'unified'
+      const head = h('div', { className: 'dgf-sec-head', key: 'diff-head' },
+        h('div', { className: 'dgf-diff-head' },
+          h('button', {
+            className: 'dgf-btn',
+            'data-variant': 'ghost',
+            disabled: busy === true,
+            onClick: view.onDiffBack,
+          }, '← 返回'),
+          h('span', { className: 'dgf-caption dgf-mono dgf-diff-title', title: view.diffPath }, view.diffPath)),
+        h('div', { style: { display: 'flex', gap: '4px', flex: 'none' } },
+          diff === null ? null : h('span', { className: 'dgf-chip', 'data-tone': 'ok' }, `+${diff.added}`),
+          diff === null ? null : h('span', { className: 'dgf-chip', 'data-tone': 'fail' }, `-${diff.deleted}`),
+          diff !== null && diff.binary ? h('span', { className: 'dgf-chip' }, '二进制') : null,
+          h('button', {
+            className: 'dgf-btn',
+            'data-variant': mode === 'unified' ? 'primary' : 'ghost',
+            onClick: () => view.onDiffMode('unified'),
+          }, '统一'),
+          h('button', {
+            className: 'dgf-btn',
+            'data-variant': mode === 'split' ? 'primary' : 'ghost',
+            onClick: () => view.onDiffMode('split'),
+          }, '并排')))
+      const body = view.diffLoading === true
+        ? h('div', { className: 'dgf-empty', key: 'diff-loading' }, '正在读取 diff…')
+        : view.diffError !== null && view.diffError !== undefined
+          ? h('div', { className: 'dgf-alert', key: 'diff-error' }, String(view.diffError))
+          : diff === null
+            ? null
+            : diff.binary
+              ? h('div', { className: 'dgf-empty', key: 'diff-binary' }, '二进制文件，无法预览内容差异')
+              : unifiedRows.length === 0
+                ? h('div', { className: 'dgf-empty', key: 'diff-empty' }, '没有可展示的内容差异')
+                : h('div', { className: 'dgf-diff', key: 'diff' },
+                  (mode === 'split' ? splitRows : unifiedRows).map(row =>
+                    mode === 'split'
+                      ? h(DiffSplitRow, { key: row.key, row })
+                      : h(DiffUnifiedRow, { key: row.key, row })))
+      const truncated = diff !== null && diff.truncated === true
+        ? h('div', { className: 'dgf-confirm-hint', key: 'diff-truncated' }, 'diff 太大，只显示前面部分')
+        : null
+      return [head, body, truncated]
     }
 
     /**
@@ -920,6 +1168,77 @@ window.__ModuleLoader__.load({
       const untracked = (repo.untrackedCount ?? 0) > 0
       const canCommit = dirty || untracked
       const merging = repo.inProgress !== null && repo.inProgress !== undefined
+      // 提交弹层：null 表示文件列表还在读取；error 时列表区域换成错误提示。
+      const commitFiles = Array.isArray(view.commitFiles) ? view.commitFiles : null
+      const commitSelected = Array.isArray(view.commitSelected) ? view.commitSelected : []
+      const commitSelectedSet = new Set(commitSelected)
+      const commitListError = view.commitFilesError ?? null
+      const canSubmitCommit = commitFiles !== null && commitListError === null
+        && commitSelected.length > 0 && (view.commitMessage ?? '').trim() !== ''
+
+      // 提交弹层：diff 预览模式下整块换成对比视图，否则是文件勾选列表。
+      const commitFilesBlock = view.diffPath !== null && view.diffPath !== undefined
+        ? renderDiffBlock(view, busy)
+        : [
+          h('div', { className: 'dgf-sec-head', key: 'commit-files-head' },
+            h('span', { className: 'dgf-sec-title' },
+              commitFiles === null
+                ? '改动文件'
+                : `改动文件 · 已选 ${commitSelected.length}/${commitFiles.length}`),
+            h('div', { style: { display: 'flex', gap: '4px' } },
+              h('button', {
+                className: 'dgf-btn',
+                'data-variant': 'ghost',
+                disabled: busy === true || commitFiles === null || commitFiles.length === 0,
+                onClick: view.onCommitSelectAll,
+              }, '全选'),
+              h('button', {
+                className: 'dgf-btn',
+                'data-variant': 'ghost',
+                disabled: busy === true || commitSelected.length === 0,
+                onClick: view.onCommitSelectNone,
+              }, '全不选'))),
+          commitFiles === null
+            ? h('div', { className: 'dgf-empty', key: 'commit-files-loading' }, '正在读取改动文件…')
+            : commitListError !== null
+              ? null
+              : h('div', { className: 'dgf-files', key: 'commit-files' },
+                commitFiles.length === 0
+                  ? h('div', { className: 'dgf-empty' }, '工作区没有可提交的改动')
+                  : commitFiles.map(file => h('div', {
+                    key: file.path,
+                    className: 'dgf-file',
+                  },
+                  h('label', { className: 'dgf-file-main', title: file.path },
+                    h('input', {
+                      type: 'checkbox',
+                      checked: commitSelectedSet.has(file.path),
+                      disabled: busy === true,
+                      onChange: () => view.onCommitToggle(file.path),
+                    }),
+                    h('span', { className: 'dgf-file-badge', 'data-status': file.status },
+                      changeLabel(file.status)),
+                    h('span', { className: 'dgf-file-path' }, file.path)),
+                  h('button', {
+                    className: 'dgf-file-diff',
+                    title: '查看这个文件的对比 diff',
+                    disabled: busy === true,
+                    onClick: () => view.onDiffOpen(file.path),
+                  }, 'diff')))),
+          commitListError !== null
+            ? h('div', { className: 'dgf-alert', key: 'commit-files-error' },
+              h('span', null, commitListError),
+              h('button', {
+                className: 'dgf-btn',
+                disabled: busy === true,
+                onClick: view.onCommitReload,
+              }, '重试'))
+            : null,
+          view.commitFilesTruncated === true
+            ? h('div', { className: 'dgf-confirm-hint', key: 'commit-files-truncated' },
+              '改动太多，只列出前 500 项；未列出的改动不会提交')
+            : null,
+        ]
 
       return h('div', { className: 'dgf-root' },
         h(Hud, {
@@ -946,7 +1265,7 @@ window.__ModuleLoader__.load({
                 title: merging
                   ? '合并/变基未完成：先点「继续」或「中止」再提交'
                   : canCommit
-                    ? '提交工作区里的改动（含未跟踪的新文件，只提交到本地不推送）'
+                    ? '提交工作区里的改动（可勾选文件，只提交到本地不推送）'
                     : '工作区没有需要提交的改动',
                 disabled: busy === true || merging || !canCommit,
                 onClick: view.onCommitOpen,
@@ -1075,7 +1394,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dgf-caption', style: { textAlign: 'center' } },
             '已完成的分支与合并会自动跳过，可重复运行')),
 
-        // 提交对话框：填提交说明后把工作区里的全部改动提交到当前分支。
+        // 提交对话框：勾选要提交的文件、填提交说明后提交到当前分支。
         view.commitOpen === true
           ? h('div', { className: 'dgf-confirm-mask' },
             h('div', { className: 'dgf-confirm', 'data-tone': 'commit' },
@@ -1084,11 +1403,7 @@ window.__ModuleLoader__.load({
                 '提交工作区改动'),
               h('div', { className: 'dgf-confirm-meta' },
                 `${repo.root}${repo.current ? ` · 当前 ${repo.current}` : ''}`),
-              h('div', { className: 'dgf-confirm-hint' },
-                `${[
-                  dirty ? `已跟踪改动 ${repo.dirtyCount}` : '',
-                  untracked ? `未跟踪 ${repo.untrackedCount}` : '',
-                ].filter(Boolean).join(' · ')}，将提交到当前分支（只提交到本地，不推送）`),
+              commitFilesBlock,
               h('textarea', {
                 className: 'dgf-commit-input',
                 value: view.commitMessage ?? '',
@@ -1099,12 +1414,15 @@ window.__ModuleLoader__.load({
                 onKeyDown: event => {
                   if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
                     event.preventDefault()
-                    if (busy !== true && (view.commitMessage ?? '').trim() !== '') view.onCommitSubmit()
+                    if (busy !== true && canSubmitCommit) view.onCommitSubmit()
                   }
                 },
               }),
               view.commitError ? h('div', { className: 'dgf-alert' }, view.commitError) : null,
-              h('div', { className: 'dgf-confirm-hint' }, 'Ctrl/⌘ + Enter 提交'),
+              h('div', { className: 'dgf-confirm-hint' },
+                canSubmitCommit
+                  ? 'Ctrl/⌘ + Enter 提交；只提交勾选的文件，不推送'
+                  : '勾选至少一个文件并填写提交说明'),
               h('div', { className: 'dgf-confirm-actions' },
                 h('button', {
                   className: 'dgf-btn',
@@ -1114,7 +1432,7 @@ window.__ModuleLoader__.load({
                 h('button', {
                   className: 'dgf-btn',
                   'data-variant': 'primary',
-                  disabled: busy === true || (view.commitMessage ?? '').trim() === '',
+                  disabled: busy === true || !canSubmitCommit,
                   onClick: view.onCommitSubmit,
                 }, busy === true ? '提交中…' : '提交'))))
           : null,
@@ -1608,6 +1926,19 @@ window.__ModuleLoader__.load({
       const [commitOpen, setCommitOpen] = React.useState(false)
       const [commitMessage, setCommitMessage] = React.useState('')
       const [commitError, setCommitError] = React.useState(null)
+      // 提交弹层的改动文件列表与勾选状态；null 表示还在读取。
+      const [commitFiles, setCommitFiles] = React.useState(null)
+      const [commitFilesTruncated, setCommitFilesTruncated] = React.useState(false)
+      const [commitFilesError, setCommitFilesError] = React.useState(null)
+      const [commitSelected, setCommitSelected] = React.useState([])
+      // diff 预览：正在看的文件、内容/错误/加载状态与视图模式。
+      const [diffPath, setDiffPath] = React.useState(null)
+      const [diffData, setDiffData] = React.useState(null)
+      const [diffError, setDiffError] = React.useState(null)
+      const [diffLoading, setDiffLoading] = React.useState(false)
+      const [diffMode, setDiffMode] = React.useState('unified')
+      // 连续点多个文件时只采用最后一次请求的结果。
+      const diffRequest = React.useRef(0)
       // 正在跟随推导的变量 key；用户手填后移出，清空后放回。
       const [following, setFollowing] = React.useState([])
 
@@ -1645,18 +1976,74 @@ window.__ModuleLoader__.load({
         }
       }
 
-      /** 提交工作区改动；失败时把原因留在对话框里，成功则关闭对话框并重读仓库。 */
+      /** 读提交弹层要展示的改动文件，并把勾选重置为全选。 */
+      const loadCommitFiles = async () => {
+        setCommitFiles(null)
+        setCommitFilesTruncated(false)
+        setCommitFilesError(null)
+        try {
+          const data = await post(ROUTE.changes, { sessionId })
+          const files = Array.isArray(data.files) ? data.files : []
+          setCommitFiles(files)
+          setCommitFilesTruncated(data.truncated === true)
+          setCommitSelected(files.map(file => file.path))
+        } catch (err) {
+          const message = explain(err)
+          setCommitFiles([])
+          setCommitSelected([])
+          setCommitFilesError(message)
+        }
+      }
+
+      /** 打开单个文件的 diff 预览；连续点击时只采用最后一次请求。 */
+      const openDiff = async (path) => {
+        const request = diffRequest.current + 1
+        diffRequest.current = request
+        setDiffPath(path)
+        setDiffData(null)
+        setDiffError(null)
+        setDiffLoading(true)
+        try {
+          const data = await post(ROUTE.diff, { sessionId, path })
+          if (diffRequest.current !== request) return
+          if (data.error) setDiffError(data.error)
+          else setDiffData(data.diff ?? null)
+        } catch (err) {
+          if (diffRequest.current !== request) return
+          setDiffError(explain(err))
+        } finally {
+          if (diffRequest.current === request) setDiffLoading(false)
+        }
+      }
+
+      /** 关闭 diff 预览，回到提交弹层的文件列表。 */
+      const closeDiff = () => {
+        diffRequest.current += 1
+        setDiffPath(null)
+        setDiffData(null)
+        setDiffError(null)
+        setDiffLoading(false)
+      }
+
+      /** 提交勾选的文件；失败时把原因留在对话框里，成功则关闭对话框并重读仓库。 */
       const submitCommit = async () => {
         if (busy) return
         setBusy(true)
         setCommitError(null)
         try {
-          const data = await post(ROUTE.commit, { sessionId, message: commitMessage })
+          const data = await post(ROUTE.commit, {
+            sessionId,
+            message: commitMessage,
+            files: commitSelected,
+          })
           const result = data.result
           setLog([{ ok: result.ok, text: result.message }])
           if (result.ok) {
             setCommitOpen(false)
             setCommitMessage('')
+            setCommitFiles(null)
+            setCommitSelected([])
+            closeDiff()
           } else {
             setCommitError(result.message)
           }
@@ -1972,15 +2359,35 @@ window.__ModuleLoader__.load({
           commitOpen,
           commitMessage,
           commitError,
+          commitFiles,
+          commitFilesTruncated,
+          commitFilesError,
+          commitSelected,
+          diffPath,
+          diffData,
+          diffError,
+          diffLoading,
+          diffMode,
+          onDiffOpen: path => void openDiff(path),
+          onDiffBack: () => closeDiff(),
+          onDiffMode: mode => setDiffMode(mode),
           onCommitOpen: () => {
             setCommitError(null)
             setCommitOpen(true)
+            closeDiff()
+            void loadCommitFiles()
           },
           onCommitMessage: next => setCommitMessage(next),
+          onCommitToggle: path => setCommitSelected(prev =>
+            (prev.includes(path) ? prev.filter(item => item !== path) : [...prev, path])),
+          onCommitSelectAll: () => setCommitSelected((commitFiles ?? []).map(file => file.path)),
+          onCommitSelectNone: () => setCommitSelected([]),
+          onCommitReload: () => void loadCommitFiles(),
           onCommitCancel: () => {
             if (busy) return
             setCommitOpen(false)
             setCommitError(null)
+            closeDiff()
           },
           onCommitSubmit: () => void submitCommit(),
           onSelectTemplate: id => {
@@ -2096,7 +2503,7 @@ window.__ModuleLoader__.load({
       __test: {
         renderRun, renderEdit, post, explain, initialValues, preview, matches,
         blankTemplate, statusView, CSS, computeDerived, applyDerived, propagateDerived,
-        GitFlowPanel, BranchPicker,
+        GitFlowPanel, BranchPicker, parseDiff, toSplitRows, changeLabel,
       },
       apply(ctx) {
         ensureStyles()
