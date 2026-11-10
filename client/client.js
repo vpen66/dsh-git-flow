@@ -300,8 +300,7 @@ window.__ModuleLoader__.load({
   display:flex; align-items:center; gap:7px; padding:5px 7px; border:0; border-radius:6px;
   background:transparent; color:var(--dgf-text); font-size:11px; text-align:left;
   transition:background .12s, color .12s}
-.dgf-picker-item:hover:not(:disabled){background:rgba(34,211,238,.16); color:#bff4ff}
-.dgf-picker-item:disabled{opacity:.45; cursor:default}
+.dgf-picker-item:hover{background:rgba(34,211,238,.16); color:#bff4ff}
 .dgf-picker-hint{font-family:var(--dsh-font-family-code-default,monospace); font-size:10.5px; flex:none}
 .dgf-picker-label{font-size:10px; color:var(--dgf-dim); overflow:hidden; text-overflow:ellipsis;
   white-space:nowrap}
@@ -1015,8 +1014,7 @@ window.__ModuleLoader__.load({
      * @returns React 节点。
      */
     function BranchPicker(props) {
-      const { value, variables, branches, onChange, placeholder, insert } = props
-      const inputRef = React.useRef(null)
+      const { value, variables, branches, onChange, placeholder } = props
       // 打开状态、过滤词、浮层位置都是本组件私有的。
       const [open, setOpen] = React.useState(false)
       const [query, setQuery] = React.useState('')
@@ -1031,36 +1029,21 @@ window.__ModuleLoader__.load({
         })),
         ...branches.map(name => ({ value: name, label: '', hint: name, kind: 'branch' })),
       ]
-      // insert 模式：已经在文本里的变量不再重复插入（下拉里置灰，避免出现 {base}{base}）。
-      const inserted = insert === true
-        ? new Set([...value.matchAll(/\{([A-Za-z0-9_]+)\}/g)].map(match => match[1]))
-        : new Set()
-      const withUsed = options.map(option => ({
-        ...option,
-        used: insert === true && option.kind === 'var' && inserted.has(option.value.slice(1, -1)),
-      }))
       const keyword = query.trim().toLowerCase()
       const filtered = keyword === ''
-        ? withUsed
-        : withUsed.filter(option =>
+        ? options
+        : options.filter(option =>
           option.value.toLowerCase().includes(keyword) || option.label.toLowerCase().includes(keyword))
 
       const isVariable = /^\{[A-Za-z0-9_]+\}$/.test(value)
       const isBranch = !isVariable && branches.includes(value)
-      // insert 模式（提交说明之类的自由文本）：只要内容里有变量占位就标「变量」，否则标「手填」。
-      const kindChip = insert === true
-        ? value.trim() === ''
-          ? null
-          : /\{[A-Za-z0-9_]+\}/.test(value)
-            ? h('span', { className: 'dgf-chip', 'data-tone': 'kind' }, '变量')
+      const kindChip = isVariable
+        ? h('span', { className: 'dgf-chip', 'data-tone': 'kind' }, '变量')
+        : isBranch
+          ? h('span', { className: 'dgf-chip', 'data-tone': 'ok' }, '分支')
+          : value.trim() === ''
+            ? null
             : h('span', { className: 'dgf-chip' }, '手填')
-        : isVariable
-          ? h('span', { className: 'dgf-chip', 'data-tone': 'kind' }, '变量')
-          : isBranch
-            ? h('span', { className: 'dgf-chip', 'data-tone': 'ok' }, '分支')
-            : value.trim() === ''
-              ? null
-              : h('span', { className: 'dgf-chip' }, '手填')
 
       /**
        * 记录输入框位置并展开浮层。
@@ -1086,7 +1069,6 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'dgf-picker' },
         h('div', { className: 'dgf-picker-field' },
           h('input', {
-            ref: inputRef,
             className: cx('dgf-input', 'dgf-grow'),
             value,
             placeholder,
@@ -1104,7 +1086,7 @@ window.__ModuleLoader__.load({
           h('button', {
             type: 'button',
             className: 'dgf-picker-caret',
-            title: insert === true ? '插入模板变量' : '选择变量或分支',
+            title: '选择变量或分支',
             onMouseDown: event => event.preventDefault(),
             onClick: event => {
               if (open) {
@@ -1126,47 +1108,20 @@ window.__ModuleLoader__.load({
             },
           },
           filtered.length === 0
-            ? h('div', { className: 'dgf-picker-empty' },
-              insert === true && variables.length === 0 ? '这个模板还没有变量，可直接输入' : '没有匹配项，可直接输入')
+            ? h('div', { className: 'dgf-picker-empty' }, '没有匹配项，可直接输入')
             : null,
           filtered.map(option => h('button', {
             key: `${option.kind}:${option.value}`,
             type: 'button',
             className: 'dgf-picker-item',
-            disabled: option.used === true,
-            title: option.used === true ? '这个变量已经插入过了' : null,
             onMouseDown: event => event.preventDefault(),
             onClick: () => {
-              if (option.used === true) return
-              if (insert === true) {
-                const element = inputRef.current
-                const start = element === null || typeof element.selectionStart !== 'number'
-                  ? value.length
-                  : element.selectionStart
-                const end = element === null || typeof element.selectionEnd !== 'number'
-                  ? value.length
-                  : element.selectionEnd
-                onChange(`${value.slice(0, start)}${option.value}${value.slice(end)}`)
-                if (element !== null) {
-                  // 等父组件把新值回填到输入框后，把光标放到插入内容之后。
-                  setTimeout(() => {
-                    try {
-                      element.focus()
-                      element.setSelectionRange(start + option.value.length, start + option.value.length)
-                    } catch {
-                      // 输入框可能已被卸载，忽略即可。
-                    }
-                  }, 0)
-                }
-              } else {
-                onChange(option.value)
-              }
+              onChange(option.value)
               setOpen(false)
             },
           },
           h('span', { className: 'dgf-picker-hint' }, option.hint),
-          option.label ? h('span', { className: 'dgf-picker-label' }, option.label) : null,
-          option.used === true ? h('span', { className: 'dgf-chip' }, '已插入') : null)))
+          option.label ? h('span', { className: 'dgf-picker-label' }, option.label) : null)))
           : null)
     }
 
@@ -2449,8 +2404,7 @@ window.__ModuleLoader__.load({
                       value: step.target,
                       variables: draft.variables ?? [],
                       branches: [],
-                      insert: true,
-                      placeholder: '如 chore: 提交工作区；点 ▾ 可插入变量',
+                      placeholder: '如 chore: 提交工作区；点 ▾ 选择变量（会替换当前内容）',
                       onChange: next => view.onEditStep(index, { target: next }),
                     })),
                   h('div', { className: 'dgf-caption' }, '只提交到本地，不推送；需要推送请再加一个「推送」步骤'))
