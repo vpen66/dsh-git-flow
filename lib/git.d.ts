@@ -76,18 +76,72 @@ export declare function conflictedFiles(cwd: string): Promise<string[]>;
  * @returns 仓库状态；非仓库时 `isRepo` 为 false。
  */
 export declare function readRepo(cwd: string): Promise<RepoInfo>;
+/** 工作区里的一处改动。 */
+export interface FileChange {
+    /** 相对仓库根的路径。 */
+    path: string;
+    /** M 修改、A 新增、D 删除、? 未跟踪。 */
+    status: 'M' | 'A' | 'D' | '?';
+    /** 是否已经在暂存区（INDEX 列不是空格或 ?）。 */
+    staged: boolean;
+}
+/**
+ * 列出工作区里的改动（含未跟踪的新文件），供面板勾选要提交的文件。只读。
+ *
+ * `--porcelain -z` 用 NUL 分隔，路径里有空格或换行也不会被拆行。用 `--no-renames`
+ * 把重命名显示为「删除 + 新增」两条，按文件勾选时不必再把新旧路径配对。
+ *
+ * @param cwd 仓库目录（可以是仓库子目录）。
+ * @returns 改动列表，顺序与 `git status` 一致；非仓库或读取失败时为空数组。
+ */
+export declare function listChanges(cwd: string): Promise<FileChange[]>;
+/** 单个改动文件的对比结果。 */
+export interface FileDiff {
+    /** 相对仓库根的路径。 */
+    path: string;
+    /** 统一 diff 文本；二进制文件或没有内容差异时为空串。 */
+    patch: string;
+    /** 新增行数。 */
+    added: number;
+    /** 删除行数。 */
+    deleted: number;
+    /** 二进制文件没有可展示的文本 diff。 */
+    binary: boolean;
+    /** diff 行数超过展示上限，patch 只保留前面部分。 */
+    truncated: boolean;
+}
+/** 读取单文件 diff 的结果；失败时 diff 为 null。 */
+export interface FileDiffResult {
+    diff: FileDiff | null;
+    error: string | null;
+}
+/**
+ * 读取一个改动文件的对比 diff。只读。
+ *
+ * 对比的是「当前工作区」与 HEAD，也就是按文件勾选提交后真正会进入这次提交的内容；
+ * 已暂存但后来又改过的工作区内容也会一起体现。未跟踪的新文件按整文件新增处理。
+ * 路径必须存在于当前改动列表：这样既不会借接口读取仓库里的任意文件，也保证弹层里
+ * 看到的和将要提交的是同一批文件。
+ *
+ * @param cwd 仓库目录。
+ * @param path 相对仓库根的路径。
+ * @returns diff 结果；路径不在改动列表、文件读取失败等情况下 error 有值。
+ */
+export declare function readFileDiff(cwd: string, path: string): Promise<FileDiffResult>;
 /**
  * 把工作区里的改动提交到当前分支。
  *
- * 暂存全部改动（含未跟踪的新文件，.gitignore 忽略的除外），并用用户填写的提交说明
- * 提交一次。只提交到本地，不推送。合并/变基进行中时拒绝提交：那种状态应该用面板的
+ * 只提交 `files` 里勾选的文件，未勾选的已暂存文件会先退出暂存区，避免"没勾却被提交"；
+ * 不传 `files` 时提交全部改动（兼容旧版浏览器半侧）。含未跟踪的新文件，.gitignore
+ * 忽略的除外。只提交到本地，不推送。合并/变基进行中时拒绝提交：那种状态应该用面板的
  * 「继续」收尾，避免把半成品合并提交掉。提交说明走 execFile 的直接参数，不经过 shell。
  *
  * @param cwd 仓库目录。
  * @param message 提交说明；首尾空白会被去掉，空说明拒绝提交。
+ * @param files 要提交的文件路径；缺省表示工作区里的全部改动。
  * @returns 执行结果。
  */
-export declare function commitWorkspace(cwd: string, message: string): Promise<GitResult>;
+export declare function commitWorkspace(cwd: string, message: string, files?: string[]): Promise<GitResult>;
 /**
  * 从起点分支创建分支；分支已存在时视为跳过而不是失败，便于流程重复执行。
  *

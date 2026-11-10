@@ -5,7 +5,9 @@
  * - `POST /git-flow/repo`：读会话工作目录的仓库状态（只读）。
  * - `POST /git-flow/templates` / `/save` / `/delete`：模板的读与改。
  * - `POST /git-flow/step`：执行模板中的一步。
- * - `POST /git-flow/commit`：提交工作区里的改动（提交信息由面板填写）。
+ * - `POST /git-flow/commit`：提交工作区里的改动（提交信息与勾选的文件由面板传入）。
+ * - `POST /git-flow/changes`：列出工作区里的改动文件（提交弹层的勾选列表）。
+ * - `POST /git-flow/diff`：读取单个改动文件的对比 diff（提交弹层的 diff 预览）。
  *
  * 仓库路径来自会话自身的 `header.cwd`，不接受请求体传入的任意路径，因此浏览器
  * 侧无法借这个面板操作会话工作目录之外的仓库。
@@ -14,7 +16,17 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Session } from '@deepseek-ai/dsh-session'
-import { readRepo, abortMerge, continueMerge, checkoutBranch, fetchRemote, commitWorkspace, type RepoInfo } from './git.js'
+import {
+  readRepo,
+  abortMerge,
+  continueMerge,
+  checkoutBranch,
+  fetchRemote,
+  commitWorkspace,
+  listChanges,
+  readFileDiff,
+  type RepoInfo,
+} from './git.js'
 import { runStep, type StepOutcome } from './workflow.js'
 import type { SyncMode } from './git.js'
 import { TemplateStore, validateTemplate, type WorkflowStep, type WorkflowTemplate } from './templates.js'
@@ -40,6 +52,10 @@ export const CONFLICT_PATH = '/git-flow/merge-conflict'
 export const FETCH_PATH = '/git-flow/fetch'
 /** 提交工作区改动的路由。 */
 export const COMMIT_PATH = '/git-flow/commit'
+/** 改动文件列表的路由。 */
+export const CHANGES_PATH = '/git-flow/changes'
+/** 单文件对比 diff 的路由。 */
+export const DIFF_PATH = '/git-flow/diff'
 /** 切回指定分支的路由。 */
 export const CHECKOUT_PATH = '/git-flow/checkout'
 /** 恢复内置默认模板路由。 */
@@ -47,6 +63,8 @@ export const RESTORE_PATH = '/git-flow/templates/restore-default'
 
 /** 请求体上限；面板的请求都是小 JSON。 */
 const MAX_BODY_BYTES = 256 * 1024
+/** 提交弹层一次最多列出的改动文件数；超出部分不参与勾选，也不会被提交。 */
+const MAX_CHANGE_ROWS = 500
 
 /** 宿主的 web 路由表；类型在本地声明以保持插件零依赖。 */
 interface RouteTable {
@@ -205,7 +223,7 @@ const NO_REPO: RepoInfo = {
 }
 
 /**
- * 插件入口：注册会话索引、模板存储、十条路由，以及给 AI 用的模板工具与命令。
+ * 插件入口：注册会话索引、模板存储、十二条路由，以及给 AI 用的模板工具与命令。
  *
  * @param ctx 插件上下文。
  */
@@ -329,12 +347,32 @@ export function apply(ctx: Context): void {
       return { result: await fetchRemote(cwd) }
     })
 
-    // 提交工作区改动：提交说明由面板的输入框传入，只提交到本地、不推送。
+    // 改动文件列表：提交弹层用它渲染勾选列表（只读）。
+    route(CHANGES_PATH, async (body) => {
+      const cwd = repoOf(body)
+      if (cwd === undefined) return { files: [], truncated: false }
+      const files = await listChanges(cwd)
+      return { files: files.slice(0, MAX_CHANGE_ROWS), truncated: files.length > MAX_CHANGE_ROWS }
+    })
+
+    // 单文件 diff：提交弹层里点某个文件的「diff」查看改动（只读）。
+    route(DIFF_PATH, async (body) => {
+      const cwd = repoOf(body)
+      const path = typeof body.path === 'string' ? body.path : ''
+      if (cwd === undefined) return { diff: null, error: '未找到该会话的工作目录' }
+      if (path === '') return { diff: null, error: '缺少文件路径' }
+      return await readFileDiff(cwd, path)
+    })
+
+    // 提交工作区改动：提交说明与勾选的文件由面板传入，只提交到本地、不推送。
     route(COMMIT_PATH, async (body) => {
       const cwd = repoOf(body)
       if (cwd === undefined) return { result: { ok: false, message: '未找到该会话的工作目录', output: '' } }
       const message = typeof body.message === 'string' ? body.message : ''
-      return { result: await commitWorkspace(cwd, message) }
+      const files = Array.isArray(body.files)
+        ? body.files.filter((item): item is string => typeof item === 'string')
+        : undefined
+      return { result: await commitWorkspace(cwd, message, files) }
     })
 
     // 执行完把用户送回原来的分支。
