@@ -300,7 +300,8 @@ window.__ModuleLoader__.load({
   display:flex; align-items:center; gap:7px; padding:5px 7px; border:0; border-radius:6px;
   background:transparent; color:var(--dgf-text); font-size:11px; text-align:left;
   transition:background .12s, color .12s}
-.dgf-picker-item:hover{background:rgba(34,211,238,.16); color:#bff4ff}
+.dgf-picker-item:hover:not(:disabled){background:rgba(34,211,238,.16); color:#bff4ff}
+.dgf-picker-item:disabled{opacity:.45; cursor:default}
 .dgf-picker-hint{font-family:var(--dsh-font-family-code-default,monospace); font-size:10.5px; flex:none}
 .dgf-picker-label{font-size:10px; color:var(--dgf-dim); overflow:hidden; text-overflow:ellipsis;
   white-space:nowrap}
@@ -1030,10 +1031,18 @@ window.__ModuleLoader__.load({
         })),
         ...branches.map(name => ({ value: name, label: '', hint: name, kind: 'branch' })),
       ]
+      // insert 模式：已经在文本里的变量不再重复插入（下拉里置灰，避免出现 {base}{base}）。
+      const inserted = insert === true
+        ? new Set([...value.matchAll(/\{([A-Za-z0-9_]+)\}/g)].map(match => match[1]))
+        : new Set()
+      const withUsed = options.map(option => ({
+        ...option,
+        used: insert === true && option.kind === 'var' && inserted.has(option.value.slice(1, -1)),
+      }))
       const keyword = query.trim().toLowerCase()
       const filtered = keyword === ''
-        ? options
-        : options.filter(option =>
+        ? withUsed
+        : withUsed.filter(option =>
           option.value.toLowerCase().includes(keyword) || option.label.toLowerCase().includes(keyword))
 
       const isVariable = /^\{[A-Za-z0-9_]+\}$/.test(value)
@@ -1124,8 +1133,11 @@ window.__ModuleLoader__.load({
             key: `${option.kind}:${option.value}`,
             type: 'button',
             className: 'dgf-picker-item',
+            disabled: option.used === true,
+            title: option.used === true ? '这个变量已经插入过了' : null,
             onMouseDown: event => event.preventDefault(),
             onClick: () => {
+              if (option.used === true) return
               if (insert === true) {
                 const element = inputRef.current
                 const start = element === null || typeof element.selectionStart !== 'number'
@@ -1153,7 +1165,8 @@ window.__ModuleLoader__.load({
             },
           },
           h('span', { className: 'dgf-picker-hint' }, option.hint),
-          option.label ? h('span', { className: 'dgf-picker-label' }, option.label) : null)))
+          option.label ? h('span', { className: 'dgf-picker-label' }, option.label) : null,
+          option.used === true ? h('span', { className: 'dgf-chip' }, '已插入') : null)))
           : null)
     }
 
@@ -1739,6 +1752,18 @@ window.__ModuleLoader__.load({
       const variables = template.variables ?? []
       const steps = template.steps ?? []
       const missing = variables.filter(variable => (values[variable.key] ?? '').trim() === '').length
+      const commitOverrides = props.commitOverrides ?? {}
+      const commitSteps = steps
+        .map((step, index) => ({ step, index }))
+        .filter(item => item.step.kind === 'commit')
+      /** 显示/执行时用的提交说明：用户改过用改后的值，否则按模板内容和变量解析。 */
+      const commitDisplay = step => (step.kind === 'commit' && commitOverrides[step.id] !== undefined
+        ? commitOverrides[step.id]
+        : preview(step.target, values))
+      const commitBlank = commitSteps.some(item => commitDisplay(item.step).trim() === '')
+      const displayStep = step => (step.kind === 'commit' && commitOverrides[step.id] !== undefined
+        ? { ...step, target: commitOverrides[step.id] }
+        : step)
       const doneCount = steps.filter(step => {
         const status = statuses[step.id]
         return status && (status.status === 'ok' || status.status === 'skipped')
@@ -1769,15 +1794,52 @@ window.__ModuleLoader__.load({
               branches,
               onChange: next => props.onValue(variable.key, next),
             }))),
+        ...(commitSteps.length === 0
+          ? []
+          : [
+            h('div', { key: 'commit-head', className: 'dgf-sec-head' },
+              h('span', { className: 'dgf-sec-title' }, '提交说明'),
+              commitBlank
+                ? h('span', { className: 'dgf-chip', 'data-tone': 'fail' }, '需填写')
+                : h('span', { className: 'dgf-chip', 'data-tone': 'ok' }, '可改')),
+            ...commitSteps.map(item => {
+              const override = commitOverrides[item.step.id]
+              return h('div', { key: `commit:${item.step.id}`, className: 'dgf-field' },
+                h('span', { className: 'dgf-field-label' },
+                  commitSteps.length > 1 ? `第 ${item.index + 1} 步` : '提交说明'),
+                h('input', {
+                  className: cx('dgf-input', 'dgf-grow'),
+                  value: override !== undefined ? override : commitDisplay(item.step),
+                  placeholder: '写这次提交的说明',
+                  onChange: event => props.onCommitOverride(item.step.id, event.target.value),
+                }),
+                override !== undefined
+                  ? h('span', { key: 'edited', className: 'dgf-chip', 'data-tone': 'kind' }, '已改')
+                  : h('span', { key: 'auto', className: 'dgf-chip', 'data-tone': 'auto' }, '自动'),
+                override !== undefined
+                  ? h('button', {
+                    key: 'reset',
+                    type: 'button',
+                    className: 'dgf-btn',
+                    'data-variant': 'ghost',
+                    style: { flex: 'none', padding: '2px 6px', fontSize: '9px' },
+                    title: '恢复模板里的提交说明',
+                    onClick: () => props.onCommitOverride(item.step.id, null),
+                  }, '↺ 模板')
+                  : null)
+            }),
+            h('div', { key: 'commit-hint', className: 'dgf-confirm-hint' },
+              '默认取模板里的提交说明；直接修改只影响这次执行。清空后不会自动回填，可重新输入或点「↺ 模板」恢复'),
+          ]),
         h('div', { key: 'flow-head', className: 'dgf-sec-head' },
           h('span', { className: 'dgf-sec-title' }, `流程 · ${steps.length} 步`),
-          h('span', { className: 'dgf-meter-text' }, missing === 0 ? '可执行' : '待填参数')),
+          h('span', { className: 'dgf-meter-text' }, missing === 0 && !commitBlank ? '可执行' : '待填写')),
         h('div', { key: 'flow', className: 'dgf-confirm-steps' },
           steps.length === 0
             ? h('div', { className: 'dgf-caption' }, '这个模板还没有步骤，去「模板」页签添加')
             : steps.map((step, index) => h('div', { key: step.id, className: 'dgf-confirm-step' },
               h('span', { className: 'dgf-sha' }, `${index + 1}.`),
-              h('span', { className: 'dgf-confirm-text' }, stepSummary(step, values)),
+              h('span', { className: 'dgf-confirm-text' }, stepSummary(displayStep(step), values)),
               stepPushable(step.kind) && step.push
                 ? h('span', { className: 'dgf-chip', 'data-tone': 'push' },
                   step.kind === 'tag' ? '推送标签' : '推送')
@@ -1807,7 +1869,7 @@ window.__ModuleLoader__.load({
           step,
           index,
           source: preview(step.source, values),
-          target: preview(step.target, values),
+          target: preview(displayStep(step).target, values),
           status: statuses[step.id],
           busy,
           showRun: false,
@@ -1847,7 +1909,7 @@ window.__ModuleLoader__.load({
             key: 'run',
             className: 'dgf-btn',
             'data-variant': 'primary',
-            disabled: busy === true || missing > 0 || steps.length === 0,
+            disabled: busy === true || missing > 0 || commitBlank || steps.length === 0,
             onClick: props.onRun,
           }, busy === true ? '执行中…' : '执行'),
         ]
@@ -2148,6 +2210,8 @@ window.__ModuleLoader__.load({
             repo,
             restore: view.restoreBranch !== false,
             failedIndex: typeof view.failedIndex === 'number' ? view.failedIndex : -1,
+            commitOverrides: view.commitOverrides ?? {},
+            onCommitOverride: view.onCommitOverride,
             onValue: view.onValue,
             onToggleRestore: view.onRestoreBranch,
             onRun: view.onRun,
@@ -2616,6 +2680,8 @@ window.__ModuleLoader__.load({
       // 右键菜单：{ branch, x, y }；执行弹窗：{ templateId, branch, startIndex, phase }。
       const [menu, setMenu] = React.useState(null)
       const [execution, setExecution] = React.useState(null)
+      // 本次执行里手改过的提交说明：stepId -> 文本；空表示跟随模板内容。
+      const [commitOverrides, setCommitOverrides] = React.useState({})
       // 最近一次执行失败记录：服务端持久化，面板重开/应用重启后仍能提示。
       const [lastFailure, setLastFailure] = React.useState(null)
       const [failureOpen, setFailureOpen] = React.useState(false)
@@ -2836,12 +2902,14 @@ window.__ModuleLoader__.load({
       const runOne = async (active, index) => {
         const step = active.steps[index]
         if (!step) return { ok: false, message: '步骤不存在' }
+        const override = step.kind === 'commit' ? commitOverrides[step.id] : undefined
+        const payload = override === undefined ? step : { ...step, target: override }
         setStatuses(prev => ({ ...prev, [step.id]: { status: 'running', message: '' } }))
         try {
           // 同步策略随模板走；缺省 merge（分叉时自动合并远端最新）。
           const data = await post(ROUTE.step, {
             sessionId,
-            step,
+            step: payload,
             values,
             sync: active.sync ?? 'merge',
             templateName: active.name,
@@ -2893,7 +2961,7 @@ window.__ModuleLoader__.load({
             stepId: step.id,
             kind: step.kind,
             source: typeof step.source === 'string' ? step.source : '',
-            target: typeof step.target === 'string' ? step.target : '',
+            target: typeof payload.target === 'string' ? payload.target : '',
             ok: false,
             skipped: false,
             message,
@@ -2937,6 +3005,7 @@ window.__ModuleLoader__.load({
         setStatuses({})
         setLog([])
         setRestoreBranch(true)
+        setCommitOverrides({})
         setExecution({
           templateId: active.id,
           branch: typeof branch === 'string' ? branch : '',
@@ -3151,6 +3220,14 @@ window.__ModuleLoader__.load({
           values,
           statuses,
           restoreBranch,
+          commitOverrides,
+          onCommitOverride: (stepId, text) => setCommitOverrides(prev => {
+            const next = { ...prev }
+            // null/undefined 表示恢复模板内容；空字符串表示这次就是空的（可继续输入）。
+            if (text === null || text === undefined) delete next[stepId]
+            else next[stepId] = text
+            return next
+          }),
           onValue: (key, value) => scheduleValue(key, value),
           onRestoreBranch: next => setRestoreBranch(next),
           onRun: () => {
