@@ -444,33 +444,35 @@ window.__ModuleLoader__.load({
   color:color-mix(in srgb, var(--dgf-text) 82%, transparent)}
 .dgf-group-count{flex:none; font-size:9px; color:var(--dgf-dim); opacity:.75}
 .dgf-group-children{display:flex; flex-direction:column; gap:1px}
-/* 提交图：左侧 SVG 画泳道与分叉/合并曲线，右侧是提交信息 */
-.dgf-graph{max-height:300px; overflow-y:auto; padding:3px 2px; border-radius:8px;
+/* 提交图：左侧 SVG 画泳道与分叉/合并曲线，右侧是紧凑的单行提交信息 */
+.dgf-graph{max-height:420px; overflow-y:auto; padding:3px 2px; border-radius:8px;
   background:rgba(120,180,255,.04);
   border:1px solid color-mix(in srgb, var(--dgf-line) 65%, transparent)}
 .dgf-graph-body{position:relative}
-.dgf-graph-svg{position:absolute; left:2px; top:0; overflow:visible; pointer-events:none}
-.dgf-graph-row{display:flex; flex-direction:column; justify-content:center; gap:1px;
+.dgf-graph-svg{position:absolute; left:2px; top:0; overflow:hidden; pointer-events:none}
+.dgf-graph-row{display:flex; flex-direction:row; align-items:center; gap:6px;
   min-width:0; padding-right:6px; border-radius:6px; cursor:default;
   /* 背景只铺在文字区，避免悬停/当前行盖住左侧的泳道线 */
   background-clip:content-box}
 .dgf-graph-row:hover{background:rgba(34,211,238,.08)}
 .dgf-graph-row[data-head=true]{background:rgba(34,211,238,.10)}
-.dgf-graph-top{display:flex; align-items:center; gap:4px; min-width:0}
 .dgf-graph-subject{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   font-size:10.5px; color:var(--dgf-text)}
-.dgf-graph-ref{flex:none; max-width:45%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-  font-family:var(--dsh-font-family-code-default,monospace); font-size:9px; padding:0 4px;
+.dgf-graph-refs{flex:none; display:flex; align-items:center; gap:2px; max-width:30%; overflow:hidden}
+.dgf-graph-ref{flex:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  font-family:var(--dsh-font-family-code-default,monospace); font-size:8.5px; padding:0 3px;
   border-radius:4px; border:1px solid var(--dgf-line); color:var(--dgf-dim)}
 .dgf-graph-ref[data-kind=head]{color:#a5f3fc; border-color:rgba(34,211,238,.55); background:rgba(34,211,238,.10)}
 .dgf-graph-ref[data-kind=remote]{color:#c4b5fd; border-color:rgba(139,92,246,.5)}
 .dgf-graph-ref[data-kind=tag]{color:var(--dgf-amber); border-color:rgba(251,191,36,.45)}
 .dgf-graph-ref[data-kind=branch]{color:var(--dgf-green); border-color:rgba(52,211,153,.45)}
-.dgf-graph-meta{display:flex; align-items:center; gap:4px; font-size:9.5px; color:var(--dgf-dim);
-  min-width:0; font-family:var(--dsh-font-family-code-default,monospace)}
+.dgf-graph-meta{flex:none; display:flex; align-items:center; gap:4px; font-size:9px;
+  color:var(--dgf-dim); font-family:var(--dsh-font-family-code-default,monospace)}
 .dgf-graph-hash{flex:none; opacity:.85}
-.dgf-graph-author{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-.dgf-graph-time{flex:none; margin-left:auto}
+.dgf-graph-author{flex:none; max-width:40px; overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap; opacity:.85}
+.dgf-graph-time{flex:none; white-space:nowrap}
+.dgf-graph-more{display:flex; justify-content:center; padding-top:4px}
 /* 右键菜单：固定定位，避免被面板的滚动容器裁掉 */
 .dgf-menu-mask{position:fixed; inset:0; z-index:1200}
 .dgf-menu{position:fixed; z-index:1201; width:232px; max-height:min(340px,70vh); overflow-y:auto;
@@ -1226,16 +1228,19 @@ window.__ModuleLoader__.load({
       }
       /** 排序并展开成可渲染节点；目录的 count 是子孙分支总数。 */
       const materialize = node => {
-        const names = [...node.dirs.keys(), ...node.leaves.keys()].sort((a, b) => a.localeCompare(b))
-        return names.map(name => {
-          const dir = node.dirs.get(name)
-          if (dir !== undefined) {
+        // 先列目录（按名字排序），再把这一层没有目录的分支排在后面，
+        // 避免出现“目录 / 单分支 / 目录”这种夹心顺序。
+        const dirs = [...node.dirs.keys()].sort((a, b) => a.localeCompare(b))
+        const leaves = [...node.leaves.keys()].sort((a, b) => a.localeCompare(b))
+        return [
+          ...dirs.map(name => {
+            const dir = node.dirs.get(name)
             const children = materialize(dir)
             const count = children.reduce((sum, child) => sum + (child.kind === 'dir' ? child.count : 1), 0)
             return { kind: 'dir', name, path: dir.path, count, children }
-          }
-          return node.leaves.get(name)
-        })
+          }),
+          ...leaves.map(name => node.leaves.get(name)),
+        ]
       }
       return materialize(root)
     }
@@ -1699,33 +1704,37 @@ window.__ModuleLoader__.load({
     }
 
     /** 提交图泳道配色：按泳道序号循环使用。 */
-    const GRAPH_COLORS = ['#22d3ee', '#8b5cf6', '#34d399', '#fbbf24', '#fb7185', '#60a5fa', '#f472b6', '#a3e635']
+    const GRAPH_COLORS = [
+      '#22d3ee', '#8b5cf6', '#34d399', '#fbbf24', '#fb7185', '#60a5fa', '#f472b6', '#a3e635',
+      '#f97316', '#2dd4bf', '#c084fc', '#eab308', '#38bdf8', '#4ade80', '#f87171', '#a78bfa',
+    ]
     /** 提交图行高（px）。 */
-    const GRAPH_ROW_HEIGHT = 38
+    const GRAPH_ROW_HEIGHT = 26
     /** 提交图每条泳道宽度（px）。 */
     const GRAPH_LANE_WIDTH = 12
-    /** 提交图最多展示的泳道数；再多会被裁掉，避免挤占正文宽度。 */
-    const GRAPH_MAX_LANES = 8
+    /**
+     * 显示泳道数：只保留「主线」和「合并支线」两条，像 IDEA 的 Git 日志一样简洁。
+     * 真实泳道可能更多，但全部映射到这两条上，避免一屏几十条线。
+     */
+    const GRAPH_VISIBLE_LANES = 2
 
     /**
-     * 时间戳转「多久之前」，与提交列表的展示风格一致。
+     * 提交时间：今天/昨天显示时分，更早显示日期 + 时分（参照 Git 客户端的排版）。
      *
      * @param at Unix 秒。
-     * @returns 中文相对时间；非法值返回空串。
+     * @returns `今天 14:03` / `昨天 18:28` / `2026/11/6 18:16`；非法值返回空串。
      */
-    function relativeTime(at) {
+    function commitTime(at) {
       if (typeof at !== 'number' || !Number.isFinite(at) || at <= 0) return ''
-      const diff = Math.max(0, Math.floor(Date.now() / 1000) - at)
-      if (diff < 60) return '刚刚'
-      if (diff < 3600) return `${Math.floor(diff / 60)} 分钟之前`
-      if (diff < 86400) return `${Math.floor(diff / 3600)} 小时之前`
-      if (diff < 86400 * 7) return `${Math.floor(diff / 86400)} 天之前`
       const date = new Date(at * 1000)
       const pad = value => String(value).padStart(2, '0')
+      const clock = `${pad(date.getHours())}:${pad(date.getMinutes())}`
       const today = new Date()
-      return date.getFullYear() === today.getFullYear()
-        ? `${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
-        : `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+      const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()
+      const startOfYesterday = startOfToday - 86400000
+      if (date.getTime() >= startOfToday) return `今天 ${clock}`
+      if (date.getTime() >= startOfYesterday) return `昨天 ${clock}`
+      return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()} ${clock}`
     }
 
     /**
@@ -1757,42 +1766,25 @@ window.__ModuleLoader__.load({
       const laneOf = new Map()
       const rows = []
       let lanes = []
-      /** 找第一条空泳道；没有就追加。 */
-      const firstFree = list => {
-        const index = list.indexOf(null)
-        return index === -1 ? list.length : index
-      }
       for (let row = 0; row < commits.length; row += 1) {
         const commit = commits[row]
         let lane = lanes.indexOf(commit.hash)
         if (lane === -1) {
-          lane = firstFree(lanes)
-          lanes[lane] = commit.hash
+          // 新的分支尖端从最右侧占用一条泳道，避免挤到别人的线上。
+          lane = lanes.length
+          lanes.push(commit.hash)
         }
         laneOf.set(commit.hash, lane)
-        const next = lanes.slice()
-        // 第一个父提交沿当前泳道；其余父提交（合并）各占一条泳道。
-        next[lane] = commit.parents[0] ?? null
-        for (let index = 1; index < commit.parents.length; index += 1) {
-          const parent = commit.parents[index]
-          if (!rowOf.has(parent)) continue
-          let parentLane = next.indexOf(parent)
-          if (parentLane === -1) {
-            parentLane = firstFree(next)
-            next[parentLane] = parent
-          }
-        }
-        // 去重：同一个父提交只留最靠前的泳道，避免合并后出现永远不消失的泳道。
-        const seen = new Set()
-        for (let index = 0; index < next.length; index += 1) {
-          const value = next[index]
-          if (value === null || value === undefined) continue
-          if (seen.has(value)) next[index] = null
-          else seen.add(value)
-        }
-        while (next.length > 0 && next[next.length - 1] === null) next.pop()
-        lanes = next
         rows.push({ commit, row, lane })
+        // 当前提交出列；它的第一个父提交接替这条泳道，其余父提交紧挨着插到右侧。
+        // 分支结束（没有可继续的父提交）时，泳道直接回收，后面的泳道整体左移。
+        lanes.splice(lane, 1)
+        let insertAt = lane
+        for (const parent of commit.parents) {
+          if (!rowOf.has(parent) || lanes.includes(parent)) continue
+          lanes.splice(insertAt, 0, parent)
+          insertAt += 1
+        }
       }
 
       const edges = []
@@ -1818,7 +1810,7 @@ window.__ModuleLoader__.load({
      * @returns React 节点。
      */
     function CommitGraph(props) {
-      const { graph, loading, error, onRefresh } = props
+      const { graph, loading, error, onRefresh, onLoadMore, onScope } = props
       // graph.error 也可能带原因（例如路由返回的仓库错误），两处都认。
       const errorText = error !== null && error !== undefined
         ? error
@@ -1827,25 +1819,36 @@ window.__ModuleLoader__.load({
           : null
       const commits = graph && Array.isArray(graph.commits) ? graph.commits : []
       const layout = React.useMemo(() => layoutCommitGraph(commits), [commits])
-      const laneCount = Math.min(Math.max(layout.laneCount, 1), GRAPH_MAX_LANES)
-      const graphWidth = laneCount * GRAPH_LANE_WIDTH + 4
+      // 只画两条泳道：0=主线，1=合并支线；真实泳道的 2、3、4… 都压到支线上。
+      const laneX = lane => Math.min(Math.max(lane, 0), GRAPH_VISIBLE_LANES - 1) * GRAPH_LANE_WIDTH
+        + GRAPH_LANE_WIDTH / 2 + 2
+      const graphWidth = GRAPH_VISIBLE_LANES * GRAPH_LANE_WIDTH + 4
       const graphHeight = layout.rows.length * GRAPH_ROW_HEIGHT
-      const colorOf = lane => GRAPH_COLORS[lane % GRAPH_COLORS.length]
+      // 颜色按真实泳道取，所以每个被合并的分支都有自己的颜色；
+      // 几何上仍然只占「主线 / 合并支线」两个位置，保持简洁。
+      const colorOf = lane => GRAPH_COLORS[Math.max(lane, 0) % GRAPH_COLORS.length]
       const headHash = graph && typeof graph.head === 'string' ? graph.head : ''
+      const hasMore = graph !== null && graph !== undefined && graph.hasMore === true
+      // 到接口上限后不再显示「加载更多」。
+      const showMore = hasMore && props.canLoadMore !== false
+      const mid = GRAPH_ROW_HEIGHT / 2
 
       const edges = layout.edges.map((edge, index) => {
-        const x1 = edge.fromLane * GRAPH_LANE_WIDTH + GRAPH_LANE_WIDTH / 2 + 2
-        const y1 = edge.fromRow * GRAPH_ROW_HEIGHT + 13
-        const x2 = edge.toLane * GRAPH_LANE_WIDTH + GRAPH_LANE_WIDTH / 2 + 2
-        const y2 = edge.toRow * GRAPH_ROW_HEIGHT + 13
+        const x1 = laneX(edge.fromLane)
+        const y1 = edge.fromRow * GRAPH_ROW_HEIGHT + mid
+        const x2 = laneX(edge.toLane)
+        const y2 = edge.toRow * GRAPH_ROW_HEIGHT + mid
+        // 像 Git 客户端一样：分叉/汇入只在相邻行之间画一小段斜线，之后沿父泳道垂直向下，
+        // 避免从合并点直接拉一条横跨多行的长斜线。
+        const yNext = Math.min(y1 + GRAPH_ROW_HEIGHT, y2)
         const d = x1 === x2
           ? `M${x1} ${y1}L${x2} ${y2}`
-          : `M${x1} ${y1}C${x1} ${(y1 + y2) / 2} ${x2} ${(y1 + y2) / 2} ${x2} ${y2}`
+          : `M${x1} ${y1}C${x1} ${y1 + GRAPH_ROW_HEIGHT * 0.35} ${x2} ${yNext - GRAPH_ROW_HEIGHT * 0.35} ${x2} ${yNext}L${x2} ${y2}`
         return h('path', {
           key: `edge:${index}`,
           d,
           fill: 'none',
-          stroke: colorOf(edge.fromLane),
+          stroke: colorOf(Math.max(edge.fromLane, edge.toLane)),
           strokeWidth: 1.6,
           strokeLinecap: 'round',
           opacity: 0.85,
@@ -1853,18 +1856,33 @@ window.__ModuleLoader__.load({
       })
       const dots = layout.rows.map(({ commit, row, lane }) => h('circle', {
         key: `dot:${commit.hash}`,
-        cx: lane * GRAPH_LANE_WIDTH + GRAPH_LANE_WIDTH / 2 + 2,
-        cy: row * GRAPH_ROW_HEIGHT + 13,
+        cx: laneX(lane),
+        cy: row * GRAPH_ROW_HEIGHT + mid,
         r: commit.hash === headHash ? 4.2 : 3.2,
         fill: colorOf(lane),
         stroke: '#05080d',
         strokeWidth: 1.4,
       }))
 
+      const scope = props.scope === 'all' ? 'all' : 'head'
       return h('div', { className: 'dgf-sec dgf-graph-sec' },
         h('div', { className: 'dgf-sec-head' },
-          h('span', { className: 'dgf-sec-title' }, `提交图 · ${commits.length}`),
-          h('div', { style: { display: 'flex', gap: '4px', alignItems: 'center' } },
+          h('span', { className: 'dgf-sec-title' }, `提交图 · ${commits.length}${hasMore ? '+' : ''}`),
+          h('div', { style: { display: 'flex', gap: '2px', alignItems: 'center' } },
+            h('button', {
+              className: 'dgf-btn',
+              'data-variant': scope === 'all' ? 'primary' : 'ghost',
+              style: { padding: '2px 6px', fontSize: '9px' },
+              title: '全部本地分支 + 标签 + HEAD（默认，和 Git 客户端一致）',
+              onClick: () => onScope('all'),
+            }, '全部'),
+            h('button', {
+              className: 'dgf-btn',
+              'data-variant': scope === 'head' ? 'primary' : 'ghost',
+              style: { padding: '2px 6px', fontSize: '9px' },
+              title: '只看当前分支的历史',
+              onClick: () => onScope('head'),
+            }, '本分支'),
             loading === true ? h('span', { className: 'dgf-chip', 'data-tone': 'run' }, '读取中') : null,
             h('button', {
               className: 'dgf-btn',
@@ -1891,24 +1909,37 @@ window.__ModuleLoader__.load({
                   className: 'dgf-graph-row',
                   'data-head': commit.hash === headHash ? 'true' : 'false',
                   style: { height: `${GRAPH_ROW_HEIGHT}px`, paddingLeft: `${graphWidth + 4}px` },
-                  title: `${commit.hash.slice(0, 10)} · ${commit.author} · ${relativeTime(commit.at)}`,
+                  title: `${commit.hash.slice(0, 10)} · ${commit.author} · ${commitTime(commit.at)}`,
                 },
-                h('div', { className: 'dgf-graph-top' },
-                  (commit.refs ?? []).map(ref => {
-                    const info = graphRefInfo(ref)
-                    return h('span', {
-                      key: ref,
-                      className: 'dgf-graph-ref',
-                      'data-kind': info.kind,
-                      title: ref,
-                    }, info.label)
-                  }),
-                  h('span', { className: 'dgf-graph-subject' }, commit.subject || '(无提交信息)')),
-                h('div', { className: 'dgf-graph-meta' },
+                h('span', {
+                  className: 'dgf-graph-subject',
+                  title: commit.subject || '(无提交信息)',
+                }, commit.subject || '(无提交信息)'),
+                (commit.refs ?? []).length === 0
+                  ? null
+                  : h('span', { className: 'dgf-graph-refs' },
+                    (commit.refs ?? []).slice(0, 3).map(ref => {
+                      const info = graphRefInfo(ref)
+                      return h('span', {
+                        key: ref,
+                        className: 'dgf-graph-ref',
+                        'data-kind': info.kind,
+                        title: ref,
+                      }, info.label)
+                    })),
+                h('span', { className: 'dgf-graph-meta' },
+                  h('span', { className: 'dgf-graph-time' }, commitTime(commit.at)),
                   h('span', { className: 'dgf-graph-hash' }, commit.hash.slice(0, 7)),
-                  h('span', { className: 'dgf-graph-author' }, commit.author),
-                  h('span', { className: 'dgf-graph-time' }, relativeTime(commit.at)))))))
-      )
+                  h('span', { className: 'dgf-graph-author', title: commit.author }, commit.author)))))),
+        showMore
+          ? h('div', { className: 'dgf-graph-more' },
+            h('button', {
+              className: 'dgf-btn',
+              'data-variant': 'ghost',
+              disabled: loading === true,
+              onClick: onLoadMore,
+            }, loading === true ? '加载中…' : '加载更多'))
+          : null)
     }
 
     /**
@@ -2165,7 +2196,8 @@ window.__ModuleLoader__.load({
       if (repo.isRepo === false) {
         return h('div', { className: 'dgf-root' },
           h('div', { className: 'dgf-scroll', style: { paddingTop: '12px' } },
-            h('div', { className: 'dgf-alert' }, repo.error || '当前目录不是 git 仓库')))
+            h('div', { className: 'dgf-alert' }, repo.error || '当前目录不是 git 仓库'),
+            h('button', { className: 'dgf-btn', onClick: view.onRefresh }, '重试')))
       }
 
       const dirty = repo.dirtyCount > 0
@@ -2292,7 +2324,11 @@ window.__ModuleLoader__.load({
             graph: view.graph ?? null,
             loading: view.graphLoading === true,
             error: view.graphError ?? null,
+            scope: view.graphScope === 'head' ? 'head' : 'all',
+            onScope: view.onGraphScope,
             onRefresh: view.onRefreshGraph,
+            onLoadMore: view.onLoadMoreGraph,
+            canLoadMore: view.graphCanLoadMore !== false,
           }),
 
           // 上次执行失败：服务端持久化，重开面板/重启应用后仍然提示。
@@ -2869,6 +2905,10 @@ window.__ModuleLoader__.load({
       const [graph, setGraph] = React.useState(null)
       const [graphLoading, setGraphLoading] = React.useState(false)
       const [graphError, setGraphError] = React.useState(null)
+      // 已加载的提交图条数；「加载更多」会逐步提高。
+      const [graphLimit, setGraphLimit] = React.useState(50)
+      // 提交图范围：all=全部本地分支（默认，和 Git 客户端一致）；head=只看当前分支。
+      const [graphScope, setGraphScope] = React.useState('all')
       const [selectedId, setSelectedId] = React.useState('')
       const [values, setValues] = React.useState({})
       const [statuses, setStatuses] = React.useState({})
@@ -2933,12 +2973,12 @@ window.__ModuleLoader__.load({
         }
       }
 
-      /** 读提交图（只读，最多 80 条）。 */
-      const refreshGraph = async () => {
+      /** 读提交图（只读）；按当前范围和条数取，支持逐步加载更多。 */
+      const refreshGraph = async (limit = graphLimit, scope = graphScope) => {
         if (!sessionId) return
         setGraphLoading(true)
         try {
-          const data = await post(ROUTE.graph, { sessionId, limit: 80 })
+          const data = await post(ROUTE.graph, { sessionId, limit, scope })
           setGraph(data.graph ?? { commits: [], current: '', head: '', error: null })
           setGraphError(data.graph && data.graph.error ? data.graph.error : null)
         } catch (err) {
@@ -3442,7 +3482,20 @@ window.__ModuleLoader__.load({
           graph,
           graphLoading,
           graphError,
+          graphScope,
+          graphCanLoadMore: graphLimit < 500,
           onRefreshGraph: () => void refreshGraph(),
+          onLoadMoreGraph: () => {
+            const next = Math.min(graphLimit + 50, 500)
+            setGraphLimit(next)
+            void refreshGraph(next, graphScope)
+          },
+          onGraphScope: next => {
+            if (next === graphScope) return
+            setGraphScope(next)
+            setGraphLimit(50)
+            void refreshGraph(50, next)
+          },
           onSwitchBranch: branch => void switchToBranch(branch),
           onBranchMenu: openBranchMenu,
           menu,
@@ -3608,7 +3661,7 @@ window.__ModuleLoader__.load({
         blankTemplate, statusView, CSS, computeDerived, applyDerived, propagateDerived,
         GitFlowPanel, BranchPicker, StepNode, LastFailureBanner,
         branchRows, branchTree, collectDirPaths, FolderIcon, BranchList, BranchMenu, ExecutionModal, stepSummary,
-        CommitGraph, layoutCommitGraph, graphRefInfo, relativeTime,
+        CommitGraph, layoutCommitGraph, graphRefInfo, commitTime,
         stepKindLabel, stepPushable, stepFlow,
         pickVariableFor, prefillValues,
         parseDiff, toSplitRows, changeLabel,

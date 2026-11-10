@@ -327,6 +327,8 @@ export interface CommitGraph {
   current: string
   /** HEAD 指向的提交；没有提交时为空串。 */
   head: string
+  /** 本次 limit 之外是否还有更旧的提交（前端据此显示「加载更多」）。 */
+  hasMore: boolean
   /** 读取失败原因；成功为 null。 */
   error: string | null
 }
@@ -337,32 +339,42 @@ const GRAPH_FIELD = '\x1f'
 const GRAPH_RECORD = '\x1e'
 
 /**
- * 读取提交图：一次 `git log --all`，带上父提交、作者、时间与引用。
+ * 读取提交图，带上父提交、作者、时间与引用。
  *
- * 只读：不 fetch、不切换分支、不改工作区。按 `--topo-order` 返回，保证父提交在子提交之后，
- * 前端可以据此画分叉/合并线。
+ * 范围二选一：
+ * - `all`（默认）：本地分支 + 标签 + HEAD，Git 客户端「全部本地分支」的视图，不会漏掉其它分支的提交；
+ * - `head`：只取当前 HEAD 的历史，泳道最少。
+ *
+ * 只读：不 fetch、不切换分支、不改工作区。按 `--date-order` 返回（父提交一定在子提交之后，
+ * 整体按提交时间倒序），前端据此画分叉/合并线；只在远端存在的陈旧分支永远不会出现。
  *
  * @param cwd 仓库目录。
- * @param limit 最多返回多少条提交（默认 80，上限 200）。
+ * @param limit 最多返回多少条提交（默认 50，上限 500）。
+ * @param scope `head` 只看当前分支；`all` 看全部本地分支 + 标签 + HEAD。
  * @returns 提交图数据；非仓库或读取失败时 error 有值。
  */
-export async function readCommitGraph(cwd: string, limit = 80): Promise<CommitGraph> {
+export async function readCommitGraph(
+  cwd: string,
+  limit = 50,
+  scope: 'head' | 'all' = 'all',
+): Promise<CommitGraph> {
   const rootRes = await git(cwd, ['rev-parse', '--show-toplevel'], { allowFail: true })
   if (!rootRes.ok || rootRes.output === '') {
-    return { commits: [], current: '', head: '', error: '当前目录不是 git 仓库' }
+    return { commits: [], current: '', head: '', hasMore: false, error: '当前目录不是 git 仓库' }
   }
   const root = rootRes.output
   const current = (await git(root, ['rev-parse', '--abbrev-ref', 'HEAD'], { allowFail: true })).output
   const head = (await git(root, ['rev-parse', '--verify', '--quiet', 'HEAD'], { allowFail: true })).output
-  const max = Math.max(1, Math.min(200, Number.isFinite(limit) ? Math.floor(limit) : 80))
+  const max = Math.max(1, Math.min(500, Number.isFinite(limit) ? Math.floor(limit) : 50))
+  const revisions = scope === 'all' ? ['--branches', '--tags', 'HEAD'] : ['HEAD']
   const res = await git(root, [
     'log',
-    '--all',
-    '--topo-order',
-    `--max-count=${max}`,
+    ...revisions,
+    '--date-order',
+    `--max-count=${max + 1}`,
     `--pretty=format:%H${GRAPH_FIELD}%P${GRAPH_FIELD}%an${GRAPH_FIELD}%at${GRAPH_FIELD}%s${GRAPH_FIELD}%D${GRAPH_RECORD}`,
   ], { allowFail: true, raw: true })
-  if (!res.ok) return { commits: [], current, head, error: res.message || '读取提交图失败' }
+  if (!res.ok) return { commits: [], current, head, hasMore: false, error: res.message || '读取提交图失败' }
 
   const commits: GraphCommit[] = []
   for (const record of res.output.split(GRAPH_RECORD)) {
@@ -381,7 +393,8 @@ export async function readCommitGraph(cwd: string, limit = 80): Promise<CommitGr
       refs: (parts[5] ?? '').split(', ').filter(item => item !== ''),
     })
   }
-  return { commits, current, head, error: null }
+  const hasMore = commits.length > max
+  return { commits: commits.slice(0, max), current, head, hasMore, error: null }
 }
 
 /** 工作区里的一处改动。 */
