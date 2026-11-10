@@ -42,16 +42,23 @@ export interface TemplateVariable {
     /** 自动填充规则；来源有值时覆盖默认值。 */
     derive?: VariableDerive;
 }
-/** 步骤种类：建分支、合并分支、只把某个分支推到远端，或在分支上打标签。 */
-export type StepKind = 'create' | 'merge' | 'push' | 'tag';
+/** 步骤种类：建分支、合并分支、只把某个分支推到远端、在分支上打标签，或拉取/提交。 */
+export type StepKind = 'create' | 'merge' | 'push' | 'tag' | 'pull' | 'commit';
 /** 一个执行步骤。 */
 export interface WorkflowStep {
     /** 稳定标识，前端用来记录每一步的状态。 */
     id: string;
     kind: StepKind;
-    /** 建分支时的起点、合并时的来源，或打标签时的来源分支。允许 `{变量}`；`push` 步骤不用它。 */
+    /**
+     * 建分支时的起点、合并/打标签时的来源分支。允许 `{变量}`；
+     * `push` / `pull` / `commit` 步骤不用它，固定为空串。
+     */
     source: string;
-    /** 建分支/合并的目标分支；`tag` 步骤里表示标签名；`push` 步骤里表示要推送的分支。允许 `{变量}`。 */
+    /**
+     * 建分支/合并的目标分支；`tag` 步骤里表示标签名；`push` 步骤里表示要推送的分支；
+     * `pull` 步骤里表示要更新到远端最新的本地分支；`commit` 步骤里表示提交说明，
+     * 允许 `{变量}`。
+     */
     target: string;
     /** 该步之后是否推送目标分支（`tag` 步骤是推送标签）。 */
     push: boolean;

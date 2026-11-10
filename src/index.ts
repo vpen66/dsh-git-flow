@@ -8,6 +8,7 @@
  * - `POST /git-flow/commit`：提交工作区里的改动（提交信息与勾选的文件由面板传入）。
  * - `POST /git-flow/changes`：列出工作区里的改动文件（提交弹层的勾选列表）。
  * - `POST /git-flow/diff`：读取单个改动文件的对比 diff（提交弹层的 diff 预览）。
+ * - `POST /git-flow/switch-branch`：切换当前分支（本地没有但远端存在时按需创建）。
  *
  * 仓库路径来自会话自身的 `header.cwd`，不接受请求体传入的任意路径，因此浏览器
  * 侧无法借这个面板操作会话工作目录之外的仓库。
@@ -21,6 +22,7 @@ import {
   abortMerge,
   continueMerge,
   checkoutBranch,
+  switchBranch,
   fetchRemote,
   commitWorkspace,
   listChanges,
@@ -63,6 +65,8 @@ export const CHANGES_PATH = '/git-flow/changes'
 export const DIFF_PATH = '/git-flow/diff'
 /** 切回指定分支的路由。 */
 export const CHECKOUT_PATH = '/git-flow/checkout'
+/** 切换当前分支的路由。 */
+export const SWITCH_PATH = '/git-flow/switch-branch'
 /** 恢复内置默认模板路由。 */
 export const RESTORE_PATH = '/git-flow/templates/restore-default'
 
@@ -184,9 +188,11 @@ function parseStep(value: unknown): WorkflowStep | null {
   if (typeof value !== 'object' || value === null) return null
   const step = value as Partial<WorkflowStep>
   if (typeof step.id !== 'string' || step.id === '') return null
-  if (step.kind !== 'create' && step.kind !== 'merge' && step.kind !== 'push' && step.kind !== 'tag') return null
-  // push 步骤没有来源，其余类型必须有。
-  if (step.kind !== 'push' && (typeof step.source !== 'string' || step.source === '')) return null
+  if (step.kind !== 'create' && step.kind !== 'merge' && step.kind !== 'push' && step.kind !== 'tag'
+    && step.kind !== 'pull' && step.kind !== 'commit') return null
+  // 只有 create / merge / tag 需要来源；push / pull / commit 的 source 可以是空串。
+  const needsSource = step.kind === 'create' || step.kind === 'merge' || step.kind === 'tag'
+  if (needsSource && (typeof step.source !== 'string' || step.source === '')) return null
   if (typeof step.target !== 'string' || step.target === '') return null
   const parsed: WorkflowStep = {
     id: step.id,
@@ -224,11 +230,12 @@ const NO_REPO: RepoInfo = {
   untrackedCount: 0,
   conflicts: [],
   branches: [],
+  remoteBranches: [],
   error: '未找到该会话的工作目录',
 }
 
 /**
- * 插件入口：注册会话索引、模板存储、十二条路由，以及给 AI 用的模板工具与命令。
+ * 插件入口：注册会话索引、模板存储、十五条路由，以及给 AI 用的模板工具与命令。
  *
  * @param ctx 插件上下文。
  */
@@ -387,6 +394,14 @@ export function apply(ctx: Context): void {
       if (cwd === undefined) return { result: { ok: false, message: '未找到该会话的工作目录', output: '' } }
       const branch = typeof body.branch === 'string' ? body.branch : ''
       return { result: await checkoutBranch(cwd, branch) }
+    })
+
+    // 切换当前分支：本地没有但远端存在时按需创建本地跟踪分支。
+    route(SWITCH_PATH, async (body) => {
+      const cwd = repoOf(body)
+      if (cwd === undefined) return { result: { ok: false, message: '未找到该会话的工作目录', output: '' } }
+      const branch = typeof body.branch === 'string' ? body.branch : ''
+      return { result: await switchBranch(cwd, branch) }
     })
 
     // 把被删掉的内置默认模板加回来。

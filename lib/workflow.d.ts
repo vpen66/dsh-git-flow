@@ -52,8 +52,9 @@ export declare function precheckStep(step: WorkflowStep, values: Record<string, 
  * 执行一个工作流步骤。
  *
  * `create` 建分支（已存在则跳过）；`merge` 合并（目标已包含来源则跳过）；
- * `tag` 在分支最新提交上打轻量标签（标签已存在则跳过）。需要时再推送目标分支或标签。
- * 任何一步都不做 rebase 或冲突自动解决。
+ * `tag` 在分支最新提交上打轻量标签（标签已存在则跳过）；`pull` 把本地分支更新到
+ * 远端最新（已最新或无同名远端分支则跳过）；`commit` 提交工作区全部改动（没有改动
+ * 则跳过）。需要时再推送目标分支或标签。任何一步都不做 rebase 或冲突自动解决。
  *
  * @param cwd 仓库目录。
  * @param step 模板步骤。

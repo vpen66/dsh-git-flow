@@ -8,7 +8,7 @@
  * 底色与文字尽量复用宿主的 `--dsw-*` 设计变量，因此浅色主题下依然可读。
  *
  * 面板有两个页签：
- * - 执行：选模板 → 填变量 → 按顺序执行步骤，每步独立状态，失败可单步重试。
+ * - 执行：分支列表（左键切换、右键选模板执行）；参数与执行进度在选择模板后的弹窗里。
  * - 模板：新建/编辑/删除模板，自由增删步骤、调整顺序、勾选是否推送。
  *
  * 展示逻辑抽在 `renderRun` / `renderEdit` 里：接收完整状态快照并返回 React 树，
@@ -28,6 +28,8 @@ window.__ModuleLoader__.load({
     const STYLE_ID = 'dsh-git-flow-style'
     /** 记住上次选中的模板，重开面板时回到它，而不是跳回第一个。 */
     const LAST_TEMPLATE_KEY = 'dsh-git-flow:last-template'
+    /** 记住折叠的分支目录：只存被折叠的路径，其余默认展开。 */
+    const COLLAPSED_KEY = 'dsh-git-flow:collapsed-groups'
 
     /** 各请求路由（浏览器相对路径）。 */
     const ROUTE = {
@@ -41,6 +43,7 @@ window.__ModuleLoader__.load({
       conflict: 'git-flow/merge-conflict',
       restore: 'git-flow/templates/restore-default',
       checkout: 'git-flow/checkout',
+      switchBranch: 'git-flow/switch-branch',
       fetch: 'git-flow/fetch',
       commit: 'git-flow/commit',
       changes: 'git-flow/changes',
@@ -409,6 +412,58 @@ window.__ModuleLoader__.load({
     color-mix(in srgb, var(--dsw-alias-bg-base,#0a0e14) 92%, transparent) 45%)}
 .dgf-dock .dgf-btn{flex:1; padding:7px 10px}
 
+/* 分支列表：左键切换当前分支，右键弹出「用模板执行」菜单 */
+.dgf-branches{display:flex; flex-direction:column; gap:1px; max-height:210px; overflow-y:auto; padding:3px;
+  border-radius:8px; background:rgba(120,180,255,.04);
+  border:1px solid color-mix(in srgb, var(--dgf-line) 65%, transparent)}
+.dgf-branch{appearance:none; -webkit-appearance:none; font-family:inherit; cursor:pointer;
+  text-align:left; display:flex; align-items:center; gap:6px; padding:4px 6px; border:0;
+  border-radius:6px; background:transparent; color:var(--dgf-text); font-size:11px; min-width:0;
+  transition:background .14s}
+.dgf-branch:hover:not(:disabled){background:rgba(34,211,238,.10)}
+.dgf-branch[data-on=true]{background:rgba(34,211,238,.14)}
+.dgf-branch:disabled{opacity:.5; cursor:default}
+.dgf-branch-name{font-family:var(--dsh-font-family-code-default,monospace); flex:none; max-width:58%;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.dgf-branch[data-on=true] .dgf-branch-name{color:#a9f0ff; font-weight:600}
+.dgf-branch-meta{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  font-size:9.5px; color:var(--dgf-dim); text-align:right}
+/* 分支目录：带 / 的分支按前缀折叠，目录行只折叠不切换 */
+.dgf-group{display:flex; flex-direction:column; gap:1px}
+.dgf-group-head{appearance:none; -webkit-appearance:none; font-family:inherit; cursor:pointer;
+  text-align:left; display:flex; align-items:center; gap:5px; padding:4px 6px; border:0;
+  border-radius:6px; background:transparent; color:var(--dgf-text); font-size:11px; min-width:0}
+.dgf-group-head:hover{background:rgba(139,92,246,.10)}
+.dgf-folder-icon{flex:none; width:12px; height:12px; fill:currentColor; color:var(--dgf-dim);
+  opacity:.9; transition:color .14s, opacity .14s}
+.dgf-group[data-collapsed=false] .dgf-folder-icon{color:var(--dgf-amber); opacity:1}
+.dgf-group-name{font-family:var(--dsh-font-family-code-default,monospace); font-weight:600;
+  flex:0 1 auto; max-width:70%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  color:color-mix(in srgb, var(--dgf-text) 82%, transparent)}
+.dgf-group-count{flex:none; font-size:9px; color:var(--dgf-dim); opacity:.75}
+.dgf-group-children{display:flex; flex-direction:column; gap:1px}
+/* 右键菜单：固定定位，避免被面板的滚动容器裁掉 */
+.dgf-menu-mask{position:fixed; inset:0; z-index:1200}
+.dgf-menu{position:fixed; z-index:1201; width:232px; max-height:min(340px,70vh); overflow-y:auto;
+  display:flex; flex-direction:column; gap:1px; padding:5px; border-radius:10px;
+  border:1px solid rgba(34,211,238,.45);
+  background:color-mix(in srgb, var(--dsw-alias-bg-layer-1,#11161f) 98%, #05080d);
+  box-shadow:0 20px 50px -18px rgba(0,0,0,.95), 0 0 0 1px rgba(34,211,238,.14)}
+.dgf-menu-title{padding:3px 7px; font-size:9px; letter-spacing:.16em; text-transform:uppercase;
+  color:var(--dgf-dim)}
+.dgf-menu-item{appearance:none; -webkit-appearance:none; font-family:inherit; cursor:pointer;
+  text-align:left; display:flex; align-items:center; gap:6px; padding:6px 8px; border:0;
+  border-radius:7px; background:transparent; color:var(--dgf-text); font-size:11px; min-width:0}
+.dgf-menu-item:hover:not(:disabled){background:rgba(34,211,238,.14); color:#bff4ff}
+.dgf-menu-item:disabled{opacity:.5; cursor:default}
+.dgf-menu-item-text{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.dgf-menu-sep{height:1px; margin:4px 2px;
+  background:color-mix(in srgb, var(--dgf-line) 75%, transparent)}
+/* 执行弹窗：参数与流程在 prepare，逐步状态在 running/done */
+.dgf-exec-body{display:flex; flex-direction:column; gap:9px; max-height:58vh; overflow-y:auto;
+  padding-right:2px}
+.dgf-exec-vars{display:flex; flex-direction:column; gap:2px}
+
 @media (prefers-color-scheme: light){
   .dgf-root{background:
     radial-gradient(900px 420px at 8% -12%, rgba(8,145,178,.10), transparent 62%),
@@ -672,6 +727,46 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 给右键的分支挑一个最合适的 `pick` 变量：优先通配符最具体的那个。
+     *
+     * 例如默认模板里 `{base}` 的模式是 `*`、`{feature}` 是 `feature/*`，
+     * 右键 `feature/v1.0.1` 应该落到 `{feature}` 而不是 `{base}`。
+     *
+     * @param variables 模板变量声明。
+     * @param branch 右键的分支名；空串表示不预填。
+     * @returns 变量声明；没有 pick 变量或分支为空时返回 null。
+     */
+    function pickVariableFor(variables, branch) {
+      const picks = (variables ?? []).filter(variable => variable.kind === 'pick')
+      if (picks.length === 0 || branch === '') return null
+      const scored = picks
+        .map(variable => ({ variable, pattern: typeof variable.pattern === 'string' ? variable.pattern : '' }))
+        .filter(item => item.pattern !== '' && matches(branch, item.pattern))
+        .map(item => ({ variable: item.variable, literal: item.pattern.replace(/\*/g, '').length }))
+        .sort((a, b) => b.literal - a.literal)
+      if (scored.length > 0) return scored[0].variable
+      return picks[0]
+    }
+
+    /**
+     * 用右键的分支给模板变量预填默认值。
+     *
+     * 只改动一个最匹配的 `pick` 变量，再按推导规则补齐 release/tag 之类的字段；
+     * 弹窗里用户仍然可以改。分支为空（例如从失败横幅重试）时只按模板默认值初始化。
+     *
+     * @param template 模板。
+     * @param branches 仓库现有分支名。
+     * @param branch 右键的分支名。
+     * @returns 预填后的变量取值。
+     */
+    function prefillValues(template, branches, branch) {
+      const values = initialValues(template, branches)
+      const pick = pickVariableFor(template.variables ?? [], branch)
+      if (pick === null) return values
+      return applyDerived(template.variables ?? [], { ...values, [pick.key]: branch })
+    }
+
+    /**
      * 状态 → 徽标文案与色调。
      *
      * @param status 状态。
@@ -919,7 +1014,8 @@ window.__ModuleLoader__.load({
      * @returns React 节点。
      */
     function BranchPicker(props) {
-      const { value, variables, branches, onChange, placeholder } = props
+      const { value, variables, branches, onChange, placeholder, insert } = props
+      const inputRef = React.useRef(null)
       // 打开状态、过滤词、浮层位置都是本组件私有的。
       const [open, setOpen] = React.useState(false)
       const [query, setQuery] = React.useState('')
@@ -942,6 +1038,20 @@ window.__ModuleLoader__.load({
 
       const isVariable = /^\{[A-Za-z0-9_]+\}$/.test(value)
       const isBranch = !isVariable && branches.includes(value)
+      // insert 模式（提交说明之类的自由文本）：只要内容里有变量占位就标「变量」，否则标「手填」。
+      const kindChip = insert === true
+        ? value.trim() === ''
+          ? null
+          : /\{[A-Za-z0-9_]+\}/.test(value)
+            ? h('span', { className: 'dgf-chip', 'data-tone': 'kind' }, '变量')
+            : h('span', { className: 'dgf-chip' }, '手填')
+        : isVariable
+          ? h('span', { className: 'dgf-chip', 'data-tone': 'kind' }, '变量')
+          : isBranch
+            ? h('span', { className: 'dgf-chip', 'data-tone': 'ok' }, '分支')
+            : value.trim() === ''
+              ? null
+              : h('span', { className: 'dgf-chip' }, '手填')
 
       /**
        * 记录输入框位置并展开浮层。
@@ -967,6 +1077,7 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'dgf-picker' },
         h('div', { className: 'dgf-picker-field' },
           h('input', {
+            ref: inputRef,
             className: cx('dgf-input', 'dgf-grow'),
             value,
             placeholder,
@@ -984,9 +1095,9 @@ window.__ModuleLoader__.load({
           h('button', {
             type: 'button',
             className: 'dgf-picker-caret',
-            title: '选择变量或分支',
+            title: insert === true ? '插入模板变量' : '选择变量或分支',
             onMouseDown: event => event.preventDefault(),
-            onClick: () => {
+            onClick: event => {
               if (open) {
                 setOpen(false)
                 return
@@ -994,13 +1105,7 @@ window.__ModuleLoader__.load({
               openAt(reactCurrentInput(event))
             },
           }, '▾'),
-          isVariable
-            ? h('span', { className: 'dgf-chip', 'data-tone': 'kind' }, '变量')
-            : isBranch
-              ? h('span', { className: 'dgf-chip', 'data-tone': 'ok' }, '分支')
-              : value.trim() === ''
-                ? null
-                : h('span', { className: 'dgf-chip' }, '手填')),
+          kindChip),
         open && rect !== null
           ? h('div', {
             className: 'dgf-picker-list',
@@ -1012,7 +1117,8 @@ window.__ModuleLoader__.load({
             },
           },
           filtered.length === 0
-            ? h('div', { className: 'dgf-picker-empty' }, '没有匹配项，可直接输入')
+            ? h('div', { className: 'dgf-picker-empty' },
+              insert === true && variables.length === 0 ? '这个模板还没有变量，可直接输入' : '没有匹配项，可直接输入')
             : null,
           filtered.map(option => h('button', {
             key: `${option.kind}:${option.value}`,
@@ -1020,7 +1126,29 @@ window.__ModuleLoader__.load({
             className: 'dgf-picker-item',
             onMouseDown: event => event.preventDefault(),
             onClick: () => {
-              onChange(option.value)
+              if (insert === true) {
+                const element = inputRef.current
+                const start = element === null || typeof element.selectionStart !== 'number'
+                  ? value.length
+                  : element.selectionStart
+                const end = element === null || typeof element.selectionEnd !== 'number'
+                  ? value.length
+                  : element.selectionEnd
+                onChange(`${value.slice(0, start)}${option.value}${value.slice(end)}`)
+                if (element !== null) {
+                  // 等父组件把新值回填到输入框后，把光标放到插入内容之后。
+                  setTimeout(() => {
+                    try {
+                      element.focus()
+                      element.setSelectionRange(start + option.value.length, start + option.value.length)
+                    } catch {
+                      // 输入框可能已被卸载，忽略即可。
+                    }
+                  }, 0)
+                }
+              } else {
+                onChange(option.value)
+              }
               setOpen(false)
             },
           },
@@ -1038,6 +1166,307 @@ window.__ModuleLoader__.load({
     function reactCurrentInput(event) {
       const wrapper = event && event.currentTarget ? event.currentTarget.parentElement : null
       return wrapper ? wrapper.querySelector('input') : undefined
+    }
+
+    /**
+     * 分支列表的行数据。
+     *
+     * 本地分支带最新提交与领先/落后数量；只在远端存在的分支标记 remote，
+     * 切过去时由服务端创建本地跟踪分支。
+     *
+     * @param repo 仓库状态。
+     * @returns 行数组。
+     */
+    function branchRows(repo) {
+      if (!repo || !Array.isArray(repo.branches)) return []
+      const locals = repo.branches.map(item => ({
+        name: item.name,
+        remote: false,
+        current: item.name === repo.current,
+        ahead: typeof item.ahead === 'number' ? item.ahead : 0,
+        behind: typeof item.behind === 'number' ? item.behind : 0,
+        subject: typeof item.subject === 'string' ? item.subject : '',
+      }))
+      const seen = new Set(locals.map(row => row.name))
+      const remotes = []
+      for (const name of repo.remoteBranches ?? []) {
+        if (typeof name !== 'string' || name === '' || seen.has(name)) continue
+        seen.add(name)
+        remotes.push({ name, remote: true, current: false, ahead: 0, behind: 0, subject: '' })
+      }
+      return [...locals, ...remotes]
+    }
+
+    /**
+     * 把分支名按 `/` 拆成目录树：带前缀的分支折叠到目录里，叶子只显示最后一段。
+     *
+     * 目录与叶子按名称排序；目录节点带子孙分支数，叶子节点保留完整行数据
+     * （切换、右键执行都用完整分支名）。
+     *
+     * @param repo 仓库状态。
+     * @returns 根层节点数组。
+     */
+    function branchTree(repo) {
+      /** 新建一个目录节点。 */
+      const makeDir = (name, path) => ({ kind: 'dir', name, path, dirs: new Map(), leaves: new Map() })
+      const root = makeDir('', '')
+      for (const row of branchRows(repo)) {
+        const segments = row.name.split('/').filter(segment => segment !== '')
+        if (segments.length === 0) continue
+        const leaf = segments.pop()
+        let node = root
+        let path = ''
+        for (const segment of segments) {
+          path = path === '' ? segment : `${path}/${segment}`
+          let dir = node.dirs.get(segment)
+          if (dir === undefined) {
+            dir = makeDir(segment, path)
+            node.dirs.set(segment, dir)
+          }
+          node = dir
+        }
+        node.leaves.set(leaf, { kind: 'branch', label: leaf, row })
+      }
+      /** 排序并展开成可渲染节点；目录的 count 是子孙分支总数。 */
+      const materialize = node => {
+        const names = [...node.dirs.keys(), ...node.leaves.keys()].sort((a, b) => a.localeCompare(b))
+        return names.map(name => {
+          const dir = node.dirs.get(name)
+          if (dir !== undefined) {
+            const children = materialize(dir)
+            const count = children.reduce((sum, child) => sum + (child.kind === 'dir' ? child.count : 1), 0)
+            return { kind: 'dir', name, path: dir.path, count, children }
+          }
+          return node.leaves.get(name)
+        })
+      }
+      return materialize(root)
+    }
+
+    /**
+     * 收集树里所有目录的路径，用于「展开全部 / 收起全部」。
+     *
+     * @param nodes 树节点数组。
+     * @param out 收集结果。
+     * @returns 目录路径数组。
+     */
+    function collectDirPaths(nodes, out = []) {
+      for (const node of nodes) {
+        if (node.kind !== 'dir') continue
+        out.push(node.path)
+        collectDirPaths(node.children, out)
+      }
+      return out
+    }
+
+    /**
+     * 目录图标：展开与收起用不同形状，替代早期的尖角符号。
+     *
+     * @param props `open` 是否展开。
+     * @returns React 节点。
+     */
+    function FolderIcon(props) {
+      const open = props.open === true
+      return h('svg', {
+        className: 'dgf-folder-icon',
+        viewBox: '0 0 16 16',
+        width: '12',
+        height: '12',
+        'data-open': open ? 'true' : 'false',
+        'aria-hidden': 'true',
+        focusable: 'false',
+      },
+      open
+        ? [
+          h('path', {
+            key: 'back',
+            d: 'M1.75 4.25A1.25 1.25 0 0 1 3 3h3.1l1.4 1.6H13a1.25 1.25 0 0 1 1.25 1.25v1.4H1.75z',
+          }),
+          h('path', {
+            key: 'front',
+            d: 'M1.74 7.25h12.62l-1.3 4.6A1.25 1.25 0 0 1 11.85 13H3a1.25 1.25 0 0 1-1.26-1.4z',
+          }),
+        ]
+        : h('path', {
+          key: 'closed',
+          d: 'M1.75 4.25A1.25 1.25 0 0 1 3 3h3.1l1.4 1.6H13a1.25 1.25 0 0 1 1.25 1.25v5.9A1.25 1.25 0 0 1 13 13H3a1.25 1.25 0 0 1-1.25-1.25z',
+        }))
+    }
+
+    /**
+     * 分支列表：按 `/` 折叠成目录树，左键切换当前分支，右键弹出「用模板执行」菜单。
+     *
+     * 当前分支所在的目录链默认展开，其它目录默认收起；点目录行切换展开状态，
+     * 右上角按钮一次展开或收起全部。
+     *
+     * @param props `repo`、`busy`、`onSwitch`、`onMenu`。
+     * @returns React 节点。
+     */
+    function BranchList(props) {
+      const { repo, busy, onSwitch, onMenu } = props
+      const tree = branchTree(repo)
+      const current = repo && typeof repo.current === 'string' ? repo.current : ''
+      const total = tree.reduce((sum, node) => sum + (node.kind === 'dir' ? node.count : 1), 0)
+      const dirPaths = collectDirPaths(tree)
+      // 当前分支的祖先目录路径；用于初始展开和切换分支后自动展开。
+      const ancestorPaths = current.split('/').slice(0, -1).map((segment, index, all) => all.slice(0, index + 1).join('/'))
+      const [expanded, setExpanded] = React.useState(() => new Set(ancestorPaths))
+      React.useEffect(() => {
+        setExpanded(prev => {
+          const next = new Set(prev)
+          for (const path of ancestorPaths) next.add(path)
+          return next
+        })
+        // ancestorPaths 由 current 派生，依赖 current 即可。
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [current])
+      const allOpen = dirPaths.length > 0 && dirPaths.every(path => expanded.has(path))
+      const inProgress = repo && repo.inProgress !== null && repo.inProgress !== undefined
+      const dirty = repo && typeof repo.dirtyCount === 'number' && repo.dirtyCount > 0
+      const state = inProgress
+        ? { tone: 'fail', text: '不可切换' }
+        : dirty
+          ? { tone: 'skip', text: '有未提交改动' }
+          : { tone: 'ok', text: '可切换' }
+
+      /** 展开/收起一个目录。 */
+      const toggleDir = path => setExpanded(prev => {
+        const next = new Set(prev)
+        if (next.has(path)) next.delete(path)
+        else next.add(path)
+        return next
+      })
+
+      /** 全部展开 / 全部收起。 */
+      const toggleAll = () => setExpanded(allOpen ? new Set() : new Set(dirPaths))
+
+      /** 按深度缩进，目录与叶子共用。 */
+      const indent = depth => ({ paddingLeft: `${6 + depth * 12}px` })
+
+      /** 递归渲染树节点。 */
+      const renderNodes = (nodes, depth) => nodes.flatMap(node => {
+        if (node.kind === 'branch') {
+          const row = node.row
+          return [h('button', {
+            key: `b:${row.name}`,
+            type: 'button',
+            className: 'dgf-branch',
+            style: indent(depth),
+            'data-on': row.current ? 'true' : 'false',
+            'data-remote': row.remote ? 'true' : 'false',
+            disabled: busy === true,
+            title: row.remote
+              ? `${row.name}（只在远端存在，切换时创建本地跟踪分支）`
+              : (row.subject || row.name),
+            onClick: () => {
+              if (row.current) return
+              onSwitch(row.name)
+            },
+            onContextMenu: event => {
+              event.preventDefault()
+              onMenu(row.name, event)
+            },
+          },
+          h('span', { className: 'dgf-branch-name', title: row.name }, node.label),
+          row.current ? h('span', { className: 'dgf-chip', 'data-tone': 'ok' }, '当前') : null,
+          row.remote ? h('span', { className: 'dgf-chip' }, '远端') : null,
+          h('span', { className: 'dgf-branch-meta' },
+            row.remote
+              ? '右键用模板执行'
+              : [row.ahead > 0 ? `↑${row.ahead}` : '', row.behind > 0 ? `↓${row.behind}` : '',
+                row.subject].filter(Boolean).join(' · ')))]
+        }
+        const open = expanded.has(node.path)
+        return [h('div', {
+          key: `d:${node.path}`,
+          className: 'dgf-group',
+          'data-collapsed': open ? 'false' : 'true',
+        },
+        h('button', {
+          type: 'button',
+          className: 'dgf-group-head',
+          style: indent(depth),
+          title: `${node.path}/（${node.count} 个分支）`,
+          onClick: () => toggleDir(node.path),
+          onContextMenu: event => event.preventDefault(),
+        },
+        h(FolderIcon, { open }),
+        h('span', { className: 'dgf-group-name' }, node.name),
+        h('span', { className: 'dgf-group-count' }, String(node.count))),
+        open ? h('div', { className: 'dgf-group-children' }, renderNodes(node.children, depth + 1)) : null)]
+      })
+
+      return h('div', { className: 'dgf-sec' },
+        h('div', { className: 'dgf-sec-head' },
+          h('span', { className: 'dgf-sec-title' }, `分支 · ${total}`),
+          h('div', { style: { display: 'flex', gap: '4px' } },
+            h('span', { className: 'dgf-chip', 'data-tone': 'ok' }, current ? `当前 ${current}` : '游离 HEAD'),
+            h('span', { className: 'dgf-chip', 'data-tone': state.tone }, state.text))),
+        total === 0
+          ? h('div', { className: 'dgf-empty' }, '没有可用分支')
+          : h('div', { className: 'dgf-branches' }, renderNodes(tree, 0)),
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
+          h('span', { className: 'dgf-caption', style: { flex: 1 } },
+            '左键切换分支；右键选择模板执行；点目录展开/收起'),
+          h('button', {
+            className: 'dgf-btn',
+            'data-variant': 'ghost',
+            style: { flex: 'none', padding: '2px 6px', fontSize: '9px' },
+            title: allOpen ? '收起所有目录' : '展开所有目录',
+            onClick: toggleAll,
+          }, allOpen ? '收起全部' : '展开全部')))
+    }
+
+    /**
+     * 分支右键菜单：选模板执行，或切换到这个分支。
+     *
+     * 用全屏透明遮罩承载「点击外部关闭」，菜单本身固定定位，位置按视口夹紧。
+     *
+     * @param props `branch`、`x`、`y`、`templates`、`current` 与回调。
+     * @returns React 节点。
+     */
+    function BranchMenu(props) {
+      const { branch, x, y, templates, current, onPickTemplate, onSwitch, onClose } = props
+      const width = 232
+      const height = Math.min(320, 92 + (templates ?? []).length * 30)
+      const left = Math.max(6, Math.min(x, (window.innerWidth || 0) - width - 6))
+      const top = Math.max(6, Math.min(y, (window.innerHeight || 0) - height - 6))
+      return h('div', {
+        className: 'dgf-menu-mask',
+        onClick: onClose,
+        onContextMenu: event => {
+          event.preventDefault()
+          onClose()
+        },
+      },
+      h('div', {
+        className: 'dgf-menu',
+        style: { left: `${left}px`, top: `${top}px` },
+        onClick: event => event.stopPropagation(),
+      },
+      h('div', { className: 'dgf-menu-title' }, `分支 ${branch}`),
+      h('div', { className: 'dgf-menu-title' }, '用模板执行'),
+      templates === null || templates === undefined || templates.length === 0
+        ? h('div', { className: 'dgf-caption', style: { padding: '2px 8px' } },
+          '还没有模板，去「模板」页签新建')
+        : templates.map(template => h('button', {
+          key: template.id,
+          type: 'button',
+          className: 'dgf-menu-item',
+          disabled: template.invalid !== undefined && template.invalid !== null && template.invalid !== '',
+          title: template.invalid ? `模板有问题：${template.invalid}` : `用「${template.name}」执行`,
+          onClick: () => onPickTemplate(template),
+        },
+        h('span', { className: 'dgf-menu-item-text' }, template.name),
+        template.invalid ? h('span', { className: 'dgf-chip', 'data-tone': 'fail' }, '有问题') : null)),
+      h('div', { className: 'dgf-menu-sep' }),
+      h('button', {
+        type: 'button',
+        className: 'dgf-menu-item',
+        disabled: branch === current,
+        onClick: () => onSwitch(branch),
+      }, h('span', { className: 'dgf-menu-item-text' },
+        branch === current ? '已在这个分支' : '切换到此分支'))))
     }
 
     /**
@@ -1079,6 +1508,71 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 步骤类型的中文短标签（徽标与动作文案共用）。
+     *
+     * @param kind 步骤类型。
+     * @returns 徽标文案。
+     */
+    function stepKindLabel(kind) {
+      return kind === 'create'
+        ? '建分支'
+        : kind === 'push'
+          ? '推送'
+          : kind === 'tag'
+            ? '打标签'
+            : kind === 'pull'
+              ? '拉取'
+              : kind === 'commit'
+                ? '提交'
+                : '合并'
+    }
+
+    /**
+     * 这一步能不能勾「执行完推送」。
+     *
+     * 建分支、合并、打标签之后可以顺手推；推送/拉取/提交没有可推送的对象。
+     *
+     * @param kind 步骤类型。
+     * @returns 是否显示推送勾选。
+     */
+    function stepPushable(kind) {
+      return kind === 'create' || kind === 'merge' || kind === 'tag'
+    }
+
+    /**
+     * 一步的流程片段：来源（或动作）、箭头、目标。
+     *
+     * 推送没有来源；拉取/提交只有一个动作对象，都不显示来源箭头。
+     *
+     * @param step 模板步骤。
+     * @param source 解析后的来源。
+     * @param target 解析后的目标。
+     * @returns React 节点数组。
+     */
+    function stepFlow(step, source, target) {
+      const kind = step.kind
+      if (kind === 'pull') {
+        return [
+          h('span', { className: 'dgf-flow-src' }, '拉取'),
+          h('span', { className: 'dgf-flow-dst' }, target),
+        ]
+      }
+      if (kind === 'commit') {
+        return [
+          h('span', { className: 'dgf-flow-src' }, '提交：'),
+          h('span', { className: 'dgf-flow-dst' }, target),
+        ]
+      }
+      return [
+        kind === 'push'
+          ? h('span', { className: 'dgf-flow-src' }, '推送')
+          : h('span', { className: 'dgf-flow-src' }, kind === 'create' || kind === 'tag' ? `从 ${source}` : source),
+        kind === 'push' ? null : h('span', { className: 'dgf-flow-arrow' }, '▸'),
+        h('span', { className: 'dgf-flow-dst' }, kind === 'tag' ? `标签 ${target}` : target),
+      ]
+    }
+
+    /**
      * 顶部「上次执行失败」横幅。
      *
      * 记录来自服务端持久化：面板重开、应用重启后依然能看到上次为什么失败。
@@ -1100,7 +1594,11 @@ window.__ModuleLoader__.load({
           ? `从 ${record.source} 创建 ${record.target}`
           : record.kind === 'tag'
             ? `打标签 ${record.target}`
-            : `${record.source} → ${record.target}`
+            : record.kind === 'pull'
+              ? `拉取 ${record.target}`
+              : record.kind === 'commit'
+                ? `提交：${record.target}`
+                : `${record.source} → ${record.target}`
       return h('div', { className: 'dgf-lastfail', role: 'alert' },
         h('div', { className: 'dgf-lastfail-title' }, '⚠ 上次执行失败'),
         h('div', { className: 'dgf-lastfail-meta' },
@@ -1130,7 +1628,7 @@ window.__ModuleLoader__.load({
      * @returns React 节点。
      */
     function StepNode(props) {
-      const { step, index, source, target, status, busy } = props
+      const { step, index, source, target, status, busy, showRun } = props
       const view = statusView(status ? status.status : 'todo')
       const state = status ? status.status : 'todo'
       const output = status && typeof status.output === 'string' ? status.output : ''
@@ -1143,25 +1641,21 @@ window.__ModuleLoader__.load({
         h('div', { className: 'dgf-step', 'data-status': state },
           h('div', { className: 'dgf-step-top' },
             h('div', { style: { display: 'flex', gap: '5px', alignItems: 'center', flexWrap: 'wrap' } },
-              h('span', { className: 'dgf-chip', 'data-tone': 'kind' },
-                step.kind === 'create' ? '建分支' : step.kind === 'push' ? '推送' : step.kind === 'tag' ? '打标签' : '合并'),
+              h('span', { className: 'dgf-chip', 'data-tone': 'kind' }, stepKindLabel(step.kind)),
               h('span', { className: 'dgf-chip', 'data-tone': view.tone }, view.text),
-              step.push ? h('span', {
+              stepPushable(step.kind) && step.push ? h('span', {
                 className: 'dgf-chip',
                 'data-tone': 'push',
                 title: step.kind === 'tag' ? '打完标签后推送该标签' : null,
               }, step.kind === 'tag' ? '推送标签' : '推送') : null),
-            h('button', {
-              className: 'dgf-btn',
-              disabled: busy === true,
-              onClick: () => props.onRun(index),
-            }, '执行')),
-          h('div', { className: 'dgf-flow' },
-            step.kind === 'push'
-              ? h('span', { className: 'dgf-flow-src' }, '推送')
-              : h('span', { className: 'dgf-flow-src' }, step.kind === 'create' || step.kind === 'tag' ? `从 ${source}` : source),
-            step.kind === 'push' ? null : h('span', { className: 'dgf-flow-arrow' }, '▸'),
-            h('span', { className: 'dgf-flow-dst' }, step.kind === 'tag' ? `标签 ${target}` : target)),
+            showRun === false
+              ? null
+              : h('button', {
+                className: 'dgf-btn',
+                disabled: busy === true,
+                onClick: () => props.onRun(index),
+              }, '执行')),
+          h('div', { className: 'dgf-flow' }, ...stepFlow(step, source, target)),
           step.note ? h('div', { className: 'dgf-note' }, step.note) : null,
           status && status.message
             ? h('div', { className: 'dgf-result', 'data-status': state }, status.message)
@@ -1208,13 +1702,196 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 把一步解析成「从哪到哪」的中文说明，用于执行弹窗的流程预览。
+     *
+     * @param step 模板步骤。
+     * @param values 变量取值。
+     * @returns 说明文本。
+     */
+    function stepSummary(step, values) {
+      const source = preview(step.source, values)
+      const target = preview(step.target, values)
+      return step.kind === 'push'
+        ? `推送 ${target}`
+        : step.kind === 'create'
+          ? `从 ${source} 创建 ${target}`
+          : step.kind === 'tag'
+            ? `从 ${source} 打标签 ${target}`
+            : step.kind === 'pull'
+              ? `拉取 ${target}`
+              : step.kind === 'commit'
+                ? `提交：${target}`
+                : `${source} → ${target}`
+    }
+
+    /**
+     * 执行弹窗。
+     *
+     * prepare 阶段：参数表单 + 解析后的完整流程 + 执行/取消；
+     * running/done 阶段：逐步状态、日志、冲突处理与失败重试。关闭后执行日志仍留在面板里。
+     *
+     * @param props 模板、阶段、变量取值、步骤状态与回调。
+     * @returns React 节点。
+     */
+    function ExecutionModal(props) {
+      const { template, phase, values, statuses, log, busy, repo, restore } = props
+      const branches = repo && Array.isArray(repo.branches) ? repo.branches.map(item => item.name) : []
+      const variables = template.variables ?? []
+      const steps = template.steps ?? []
+      const missing = variables.filter(variable => (values[variable.key] ?? '').trim() === '').length
+      const doneCount = steps.filter(step => {
+        const status = statuses[step.id]
+        return status && (status.status === 'ok' || status.status === 'skipped')
+      }).length
+      const percent = steps.length === 0 ? 0 : Math.round((doneCount / steps.length) * 100)
+      const failed = typeof props.failedIndex === 'number' && props.failedIndex >= 0
+      const running = phase === 'running'
+      const conflict = repo.inProgress !== null && repo.inProgress !== undefined
+
+      const metaParts = [repo.root]
+      if (props.branch) metaParts.push(`右键分支 ${props.branch}`)
+      if (repo.current) metaParts.push(`当前 ${repo.current}`)
+
+      const prepareBody = [
+        h('div', { key: 'vars-head', className: 'dgf-sec-head' },
+          h('span', { className: 'dgf-sec-title' }, '参数'),
+          missing === 0
+            ? h('span', { className: 'dgf-chip', 'data-tone': 'ok' }, '就绪')
+            : h('span', { className: 'dgf-chip', 'data-tone': 'skip' }, `还有 ${missing} 个未填`)),
+        h('div', { key: 'vars', className: 'dgf-exec-vars' },
+          variables.length === 0
+            ? h('div', { className: 'dgf-caption' }, '这个模板没有变量')
+            : variables.map(variable => h(VariableRow, {
+              key: variable.key,
+              variable,
+              values,
+              value: values[variable.key] ?? '',
+              branches,
+              onChange: next => props.onValue(variable.key, next),
+            }))),
+        h('div', { key: 'flow-head', className: 'dgf-sec-head' },
+          h('span', { className: 'dgf-sec-title' }, `流程 · ${steps.length} 步`),
+          h('span', { className: 'dgf-meter-text' }, missing === 0 ? '可执行' : '待填参数')),
+        h('div', { key: 'flow', className: 'dgf-confirm-steps' },
+          steps.length === 0
+            ? h('div', { className: 'dgf-caption' }, '这个模板还没有步骤，去「模板」页签添加')
+            : steps.map((step, index) => h('div', { key: step.id, className: 'dgf-confirm-step' },
+              h('span', { className: 'dgf-sha' }, `${index + 1}.`),
+              h('span', { className: 'dgf-confirm-text' }, stepSummary(step, values)),
+              stepPushable(step.kind) && step.push
+                ? h('span', { className: 'dgf-chip', 'data-tone': 'push' },
+                  step.kind === 'tag' ? '推送标签' : '推送')
+                : null))),
+        h('label', { key: 'restore', className: 'dgf-toggle' },
+          h('input', {
+            type: 'checkbox',
+            checked: restore,
+            onChange: event => props.onToggleRestore(event.target.checked),
+          }),
+          h('span', null, '执行完切回原分支')),
+        h('div', { key: 'hint', className: 'dgf-confirm-hint' },
+          restore && repo.current
+            ? `执行过程中会 checkout 到目标分支，完成后切回 ${repo.current}；已完成的分支与合并会自动跳过`
+            : '执行过程中会 checkout 到目标分支，结束后停在最后一个分支；已完成的分支与合并会自动跳过'),
+      ]
+
+      const progressBody = [
+        h('div', { key: 'progress-head', className: 'dgf-sec-head' },
+          h('span', { className: 'dgf-sec-title' }, `流水线 · ${steps.length} 步`),
+          h('span', { className: 'dgf-meter-text' }, `${doneCount}/${steps.length} · ${percent}%`)),
+        h('div', { key: 'progress-bar', className: 'dgf-meter' },
+          h('div', { className: 'dgf-meter-bar' },
+            h('div', { className: 'dgf-meter-fill', style: { width: `${percent}%` } }))),
+        h('div', { key: 'progress-steps', className: 'dgf-pipe' }, steps.map((step, index) => h(StepNode, {
+          key: step.id,
+          step,
+          index,
+          source: preview(step.source, values),
+          target: preview(step.target, values),
+          status: statuses[step.id],
+          busy,
+          showRun: false,
+        }))),
+        h(LogView, { key: 'progress-log', log }),
+        conflict
+          ? h('div', { key: 'conflict' },
+            h('div', { className: 'dgf-conflict-title' }, `⚠ ${repo.inProgress}`),
+            (repo.conflicts ?? []).length > 0
+              ? h('div', { className: 'dgf-conflict-files' },
+                (repo.conflicts ?? []).map(file => h('div', { key: file, className: 'dgf-conflict-file' }, file)))
+              : null,
+            h('div', { className: 'dgf-conflict-hint' },
+              (repo.conflicts ?? []).length > 0
+                ? '在终端或编辑器里解决这些文件，然后 git add；解决后「继续」可用'
+                : '冲突已全部暂存，可以点「继续」收尾'),
+            h('div', { style: { display: 'flex', gap: '6px' } },
+              h('button', {
+                className: 'dgf-btn',
+                'data-variant': 'primary',
+                disabled: busy === true || (repo.conflicts ?? []).length > 0,
+                onClick: props.onContinueMerge,
+              }, '继续'),
+              h('button', {
+                className: 'dgf-btn',
+                'data-variant': 'danger',
+                disabled: busy === true,
+                onClick: props.onAbortMerge,
+              }, '中止')))
+          : null,
+      ]
+
+      const actions = phase === 'prepare'
+        ? [
+          h('button', { key: 'cancel', className: 'dgf-btn', disabled: busy === true, onClick: props.onCancel }, '取消'),
+          h('button', {
+            key: 'run',
+            className: 'dgf-btn',
+            'data-variant': 'primary',
+            disabled: busy === true || missing > 0 || steps.length === 0,
+            onClick: props.onRun,
+          }, busy === true ? '执行中…' : '执行'),
+        ]
+        : running
+          ? [h('div', { key: 'running-hint', className: 'dgf-confirm-hint', style: { flex: 1 } },
+            '执行中，跑完会自动停在结果页…')]
+          : [
+            failed
+              ? h('button', {
+                key: 'retry',
+                className: 'dgf-btn',
+                'data-variant': 'primary',
+                disabled: busy === true,
+                onClick: props.onRetry,
+              }, '从失败处重试')
+              : null,
+            h('button', { key: 'close', className: 'dgf-btn', disabled: busy === true, onClick: props.onClose }, '关闭'),
+          ]
+
+      return h('div', { className: 'dgf-confirm-mask' },
+        h('div', {
+          className: 'dgf-confirm',
+          ...(failed ? {} : { 'data-tone': 'commit' }),
+        },
+        h('div', { className: 'dgf-confirm-title' },
+          h('span', { className: 'dgf-led', 'data-state': failed ? 'bad' : running ? 'warn' : 'ok' }),
+          phase === 'prepare'
+            ? `用「${template.name}」执行`
+            : `「${template.name}」${running ? '执行中' : failed ? '执行失败' : '执行完成'}`),
+        h('div', { className: 'dgf-confirm-meta' }, metaParts.join(' · ')),
+        h('div', { className: 'dgf-exec-body' }, phase === 'prepare' ? prepareBody : progressBody),
+        h('div', { className: 'dgf-confirm-actions' }, ...actions)))
+    }
+
+    /**
      * 渲染「执行」页签。纯函数。
+     *
+     * 面板只负责仓库状态与分支列表；执行入口在分支右键菜单，参数与进度都在弹窗里。
      *
      * @param view 状态与回调。
      * @returns React 节点。
      */
     function renderRun(view) {
-      const { repo, templates, template, values, statuses, busy, log, error } = view
+      const { repo, templates, busy, log, error } = view
 
       if (error !== null && repo === null) {
         return h('div', { className: 'dgf-root' },
@@ -1232,13 +1909,6 @@ window.__ModuleLoader__.load({
             h('div', { className: 'dgf-alert' }, repo.error || '当前目录不是 git 仓库')))
       }
 
-      const branches = repo.branches.map(item => item.name)
-      const steps = template ? template.steps : []
-      const doneCount = steps.filter(step => {
-        const status = statuses[step.id]
-        return status && (status.status === 'ok' || status.status === 'skipped')
-      }).length
-      const percent = steps.length === 0 ? 0 : Math.round((doneCount / steps.length) * 100)
       const dirty = repo.dirtyCount > 0
       const untracked = (repo.untrackedCount ?? 0) > 0
       const canCommit = dirty || untracked
@@ -1350,6 +2020,14 @@ window.__ModuleLoader__.load({
             dirty ? ` · 已跟踪改动 ${repo.dirtyCount}` : (untracked ? '' : ' · 工作区干净'),
             untracked ? ` · 未跟踪 ${repo.untrackedCount}` : ''),
 
+          // 分支列表：左键切换，右键选模板执行。
+          h(BranchList, {
+            repo,
+            busy,
+            onSwitch: view.onSwitchBranch,
+            onMenu: view.onBranchMenu,
+          }),
+
           // 上次执行失败：服务端持久化，重开面板/重启应用后仍然提示。
           h(LastFailureBanner, {
             record: view.lastFailure ?? null,
@@ -1390,93 +2068,10 @@ window.__ModuleLoader__.load({
                 }, '中止')))
             : null,
 
-          h('div', { className: 'dgf-sec' },
-            h('div', { className: 'dgf-sec-head' },
-              h('span', { className: 'dgf-sec-title' }, '模板'),
-              h('div', { style: { display: 'flex', gap: '4px' } },
-                h('button', {
-                  className: 'dgf-btn',
-                  'data-variant': 'ghost',
-                  title: '重新从磁盘读取模板（AI 新增模板后点这里）',
-                  onClick: view.onReloadTemplates,
-                }, '↻ 重读'),
-                h('button', { className: 'dgf-btn', 'data-variant': 'ghost', onClick: view.onNewTemplate }, '＋ 新建'))),
-            h('select', {
-              className: 'dgf-select',
-              value: template ? template.id : '',
-              onChange: event => view.onSelectTemplate(event.target.value),
-            }, templates.map(item => h('option', { key: item.id, value: item.id }, item.name))),
-            template && template.description ? h('div', { className: 'dgf-caption' }, template.description) : null),
-
-          template ? h('div', { className: 'dgf-sec' },
-            h('div', { className: 'dgf-sec-head' },
-              h('span', { className: 'dgf-sec-title' }, '参数'),
-              (template.variables ?? []).some(v => (values[v.key] ?? '').trim() === '')
-                ? h('span', { className: 'dgf-chip', 'data-tone': 'skip' }, '待填写')
-                : h('span', { className: 'dgf-chip', 'data-tone': 'ok' }, '就绪')),
-            (template.variables ?? []).length === 0
-              ? h('div', { className: 'dgf-caption' }, '这个模板没有变量')
-              : (template.variables ?? []).map(variable => h(VariableRow, {
-                key: variable.key,
-                variable,
-                values,
-                value: values[variable.key] ?? '',
-                branches,
-                onChange: next => view.onValue(variable.key, next),
-              }))) : null,
-
-          template ? h('div', { className: 'dgf-sec' },
-            h('div', { className: 'dgf-sec-head' },
-              h('span', { className: 'dgf-sec-title' }, `流水线 · ${steps.length} 步`),
-              h('span', { className: 'dgf-meter-text' }, `${doneCount}/${steps.length}`)),
-            h('div', { className: 'dgf-meter' },
-              h('div', { className: 'dgf-meter-bar' },
-                h('div', { className: 'dgf-meter-fill', style: { width: `${percent}%` } })),
-              h('span', { className: 'dgf-meter-text' }, `${percent}%`)),
-            steps.length === 0
-              ? h('div', { className: 'dgf-empty' }, '这个模板还没有步骤，去「模板」页签添加')
-              : h('div', { className: 'dgf-pipe' }, steps.map((step, index) => h(StepNode, {
-                key: step.id,
-                step,
-                index,
-                source: preview(step.source, values),
-                target: preview(step.target, values),
-                status: statuses[step.id],
-                busy,
-                // 该步因冲突失败，但仓库里已经没有进行中的操作 = 冲突已在外部解决
-                resumeHint: Boolean(statuses[step.id]
-                  && statuses[step.id].status === 'failed'
-                  && Array.isArray(statuses[step.id].conflicts)
-                  && statuses[step.id].conflicts.length > 0
-                  && (repo.inProgress === null || repo.inProgress === undefined)),
-                onRun: view.onRunOne,
-              })))) : null,
-
           h(LogView, { log }),
 
-          h('label', { className: 'dgf-toggle' },
-            h('input', {
-              type: 'checkbox',
-              checked: view.restoreBranch !== false,
-              onChange: event => view.onRestoreBranch(event.target.checked),
-            }),
-            h('span', null, '执行完切回原分支')),
-          h('div', { className: 'dgf-dock' },
-            h('button', {
-              className: 'dgf-btn',
-              'data-variant': 'primary',
-              disabled: busy === true,
-              onClick: view.onRunAll,
-            }, busy ? '执行中…' : '▶ 全部执行'),
-            view.hasFailure
-              ? h('button', {
-                className: 'dgf-btn',
-                disabled: busy === true,
-                onClick: view.onRetryFailed,
-              }, '↻ 重试')
-              : null),
           h('div', { className: 'dgf-caption', style: { textAlign: 'center' } },
-            '已完成的分支与合并会自动跳过，可重复运行')),
+            '右键分支选择模板执行；已完成的分支与合并会自动跳过，可重复运行')),
 
         // 提交对话框：勾选要提交的文件、填提交说明后提交到当前分支。
         view.commitOpen === true
@@ -1521,54 +2116,47 @@ window.__ModuleLoader__.load({
                 }, busy === true ? '提交中…' : '提交'))))
           : null,
 
-        // 执行前确认：把解析后的流程摆出来，避免误触直接改分支。
-        view.pending === null || view.pending === undefined
+        // 右键菜单：选模板执行，或切换到这个分支。
+        view.menu === null || view.menu === undefined
           ? null
-          : h('div', { className: 'dgf-confirm-mask' },
-            h('div', { className: 'dgf-confirm' },
-              h('div', { className: 'dgf-confirm-title' },
-                h('span', { className: 'dgf-led', 'data-state': 'warn' }),
-                view.pending.mode === 'one' ? '确认执行这一步？' : '确认执行整个流程？'),
-              h('div', { className: 'dgf-confirm-meta' },
-                `${repo.root}`, repo.current ? ` · 当前 ${repo.current}` : ''),
-              h('div', { className: 'dgf-confirm-steps' },
-                (view.pending.mode === 'one'
-                  ? [template.steps[view.pending.index]]
-                  : template.steps.slice(view.pending.fromIndex ?? 0)
-                ).filter(Boolean).map((step, offset) => {
-                  const source = preview(step.source, values)
-                  const target = preview(step.target, values)
-                  const index = (view.pending.mode === 'one' ? view.pending.index : (view.pending.fromIndex ?? 0)) + offset
-                  return h('div', { key: step.id, className: 'dgf-confirm-step' },
-                    h('span', { className: 'dgf-sha' }, `${index + 1}.`),
-                    h('span', { className: 'dgf-confirm-text' },
-                      step.kind === 'push'
-                        ? `推送 ${target}`
-                        : step.kind === 'create'
-                          ? `从 ${source} 创建 ${target}`
-                          : step.kind === 'tag'
-                            ? `从 ${source} 打标签 ${target}`
-                            : `${source} → ${target}`),
-                    step.kind !== 'push' && step.push
-                      ? h('span', { className: 'dgf-chip', 'data-tone': 'push' },
-                        step.kind === 'tag' ? '推送标签' : '推送')
-                      : null)
-                })),
-              h('div', { className: 'dgf-confirm-hint' },
-                view.restoreBranch !== false && repo.current
-                  ? `执行过程中会 checkout 到目标分支，完成后切回 ${repo.current}`
-                  : '执行过程中会 checkout 到目标分支，结束后停在最后一个分支'),
-              h('div', { className: 'dgf-confirm-actions' },
-                h('button', {
-                  className: 'dgf-btn',
-                  onClick: view.onCancelRun,
-                }, '取消'),
-                h('button', {
-                  className: 'dgf-btn',
-                  'data-variant': 'primary',
-                  disabled: busy === true,
-                  onClick: view.onConfirmRun,
-                }, '确认执行')))))
+          : h(BranchMenu, {
+            branch: view.menu.branch,
+            x: view.menu.x,
+            y: view.menu.y,
+            templates,
+            current: repo.current,
+            onPickTemplate: view.onPickTemplate,
+            onSwitch: branch => {
+              view.onCloseMenu()
+              view.onSwitchBranch(branch)
+            },
+            onClose: view.onCloseMenu,
+          }),
+
+        // 执行弹窗：先确认参数与流程，执行中逐步显示状态，失败可从失败处重试。
+        view.execution === null || view.execution === undefined
+          || view.executionTemplate === null || view.executionTemplate === undefined
+          ? null
+          : h(ExecutionModal, {
+            template: view.executionTemplate,
+            branch: view.execution.branch,
+            phase: view.execution.phase,
+            values: view.values ?? {},
+            statuses: view.statuses ?? {},
+            log,
+            busy,
+            repo,
+            restore: view.restoreBranch !== false,
+            failedIndex: typeof view.failedIndex === 'number' ? view.failedIndex : -1,
+            onValue: view.onValue,
+            onToggleRestore: view.onRestoreBranch,
+            onRun: view.onRun,
+            onRetry: view.onRetryRun,
+            onCancel: view.onCancelExecution,
+            onClose: view.onCloseExecution,
+            onAbortMerge: view.onAbortMerge,
+            onContinueMerge: view.onContinueMerge,
+          }))
     }
 
     /**
@@ -1742,11 +2330,12 @@ window.__ModuleLoader__.load({
               h('option', { value: 'create' }, '建分支'),
               h('option', { value: 'merge' }, '合并'),
               h('option', { value: 'tag' }, '打标签'),
-              h('option', { value: 'push' }, '推送')),
-              // 「推送」步骤本身就是推送，不需要再勾一次。
-              step.kind === 'push'
-                ? null
-                : h('label', {
+              h('option', { value: 'push' }, '推送'),
+              h('option', { value: 'pull' }, '拉取'),
+              h('option', { value: 'commit' }, '提交')),
+              // 推送/拉取/提交本身没有可推送的对象，只有建分支/合并/打标签能顺手推。
+              stepPushable(step.kind)
+                ? h('label', {
                   style: {
                     display: 'flex', alignItems: 'center', gap: '4px',
                     fontSize: '10px', color: 'var(--dgf-dim)',
@@ -1756,7 +2345,8 @@ window.__ModuleLoader__.load({
                   type: 'checkbox',
                   checked: step.push === true,
                   onChange: event => view.onEditStep(index, { push: event.target.checked }),
-                }), step.kind === 'tag' ? '推送标签' : '推送'),
+                }), step.kind === 'tag' ? '推送标签' : '推送')
+                : null,
               h('div', { className: 'dgf-grow' }),
               h('button', {
                 className: 'dgf-iconbtn', title: '上移', onClick: () => view.onMoveStep(index, -1),
@@ -1780,6 +2370,29 @@ window.__ModuleLoader__.load({
                   placeholder: '要推到远端的分支',
                   onChange: next => view.onEditStep(index, { target: next }),
                 }))
+              : step.kind === 'pull'
+                ? h('div', { className: 'dgf-field', style: { marginTop: '5px' } },
+                  h('span', { className: 'dgf-field-label' }, '分支'),
+                  h(BranchPicker, {
+                    value: step.target,
+                    variables: draft.variables ?? [],
+                    branches: view.branches ?? [],
+                    placeholder: '要更新到远端最新的本地分支',
+                    onChange: next => view.onEditStep(index, { target: next }),
+                  }))
+              : step.kind === 'commit'
+                ? h('div', null,
+                  h('div', { className: 'dgf-field', style: { marginTop: '5px' } },
+                    h('span', { className: 'dgf-field-label' }, '提交说明'),
+                    h(BranchPicker, {
+                      value: step.target,
+                      variables: draft.variables ?? [],
+                      branches: [],
+                      insert: true,
+                      placeholder: '如 chore: 提交工作区；点 ▾ 可插入变量',
+                      onChange: next => view.onEditStep(index, { target: next }),
+                    })),
+                  h('div', { className: 'dgf-caption' }, '只提交到本地，不推送；需要推送请再加一个「推送」步骤'))
               : step.kind === 'tag'
                 ? h('div', null,
                   h('div', { className: 'dgf-field', style: { marginTop: '5px' } },
@@ -1827,12 +2440,8 @@ window.__ModuleLoader__.load({
             const source = preview(step.source, guess)
             const target = preview(step.target, guess)
             return h('div', { key: index, className: 'dgf-flow' },
-              step.kind === 'push'
-                ? h('span', { className: 'dgf-flow-src' }, '推送')
-                : h('span', { className: 'dgf-flow-src' }, step.kind === 'create' || step.kind === 'tag' ? `从 ${source}` : source),
-              step.kind === 'push' ? null : h('span', { className: 'dgf-flow-arrow' }, '▸'),
-              h('span', { className: 'dgf-flow-dst' }, step.kind === 'tag' ? `标签 ${target}` : target),
-              step.kind !== 'push' && step.push
+              ...stepFlow(step, source, target),
+              stepPushable(step.kind) && step.push
                 ? h('span', { className: 'dgf-chip', 'data-tone': 'push' },
                   step.kind === 'tag' ? '推送标签' : '推送')
                 : null)
@@ -2004,8 +2613,9 @@ window.__ModuleLoader__.load({
       const [collapsed, setCollapsed] = React.useState(false)
       // 流程跑完后把用户送回来时所在的分支，避免停在最后一次合并的目标分支上。
       const [restoreBranch, setRestoreBranch] = React.useState(true)
-      // 待确认的执行请求：{ mode: 'all' | 'retry' | 'one', fromIndex?, index? }
-      const [pending, setPending] = React.useState(null)
+      // 右键菜单：{ branch, x, y }；执行弹窗：{ templateId, branch, startIndex, phase }。
+      const [menu, setMenu] = React.useState(null)
+      const [execution, setExecution] = React.useState(null)
       // 最近一次执行失败记录：服务端持久化，面板重开/应用重启后仍能提示。
       const [lastFailure, setLastFailure] = React.useState(null)
       const [failureOpen, setFailureOpen] = React.useState(false)
@@ -2033,7 +2643,12 @@ window.__ModuleLoader__.load({
         () => (repo && repo.branches ? repo.branches.map(item => item.name) : []),
         [repo],
       )
+      const currentBranch = repo && typeof repo.current === 'string' ? repo.current : ''
+      // 模板页签仍按 selectedId 编辑；执行弹窗用自己记住的模板，避免互相影响。
       const template = templates.find(item => item.id === selectedId) ?? templates[0] ?? null
+      const executionTemplate = execution === null || execution === undefined
+        ? null
+        : templates.find(item => item.id === execution.templateId) ?? null
 
       /** 读仓库状态。 */
       const refreshRepo = async () => {
@@ -2065,6 +2680,22 @@ window.__ModuleLoader__.load({
         setBusy(true)
         try {
           const data = await post(ROUTE.fetch, { sessionId })
+          const result = data.result
+          setLog([{ ok: result.ok, text: result.message }])
+        } catch (err) {
+          setLog([{ ok: false, text: explain(err) }])
+        } finally {
+          setBusy(false)
+          await refreshRepo()
+        }
+      }
+
+      /** 切换到指定分支；成功/失败都记录结果，最后重读仓库状态。 */
+      const switchToBranch = async (branch) => {
+        if (busy || !branch || branch === currentBranch) return
+        setBusy(true)
+        try {
+          const data = await post(ROUTE.switchBranch, { sessionId, branch })
           const result = data.result
           setLog([{ ok: result.ok, text: result.message }])
         } catch (err) {
@@ -2182,19 +2813,6 @@ window.__ModuleLoader__.load({
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [sessionId])
 
-      const templateId = template ? template.id : ''
-      const repoReady = repo !== null
-
-      // 切换模板（或首次读到仓库）时重置变量与步骤状态。
-      React.useEffect(() => {
-        if (!template) return
-        setValues(initialValues(template, branches))
-        setFollowing((template.variables ?? []).filter(variable => variable.derive).map(variable => variable.key))
-        setStatuses({})
-        setLog([])
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, [templateId, repoReady])
-
       // 合并/变基停在冲突里时定时重读仓库：用户在外部解决并 git add 后，
       // 面板能自己发现「冲突已清空」，不必手动点刷新。
       const operationInProgress = repo !== null && typeof repo.inProgress === 'string' && repo.inProgress !== ''
@@ -2211,11 +2829,12 @@ window.__ModuleLoader__.load({
       /**
        * 执行一个步骤并更新状态。
        *
+       * @param active 本次执行使用的模板。
        * @param index 步骤下标。
        * @returns 该步结果。
        */
-      const runOne = async (index) => {
-        const step = template.steps[index]
+      const runOne = async (active, index) => {
+        const step = active.steps[index]
         if (!step) return { ok: false, message: '步骤不存在' }
         setStatuses(prev => ({ ...prev, [step.id]: { status: 'running', message: '' } }))
         try {
@@ -2224,8 +2843,8 @@ window.__ModuleLoader__.load({
             sessionId,
             step,
             values,
-            sync: template.sync ?? 'merge',
-            templateName: template.name,
+            sync: active.sync ?? 'merge',
+            templateName: active.name,
             stepIndex: index,
           })
           const outcome = data.outcome
@@ -2250,7 +2869,7 @@ window.__ModuleLoader__.load({
           } else {
             setLastFailure({
               at: new Date().toISOString(),
-              templateName: template.name,
+              templateName: active.name,
               stepIndex: index,
               stepId: step.id,
               kind: typeof outcome.kind === 'string' ? outcome.kind : step.kind,
@@ -2269,7 +2888,7 @@ window.__ModuleLoader__.load({
           setLog(prev => [...prev, { ok: false, text: message }])
           setLastFailure({
             at: new Date().toISOString(),
-            templateName: template.name,
+            templateName: active.name,
             stepIndex: index,
             stepId: step.id,
             kind: step.kind,
@@ -2285,11 +2904,6 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * 顺序执行步骤，遇到失败即停。
-       *
-       * @param fromIndex 起始下标。
-       */
-      /**
        * 切回指定分支并记录结果。
        *
        * @param branch 要切回的分支；空值或 HEAD 时直接跳过。
@@ -2304,41 +2918,79 @@ window.__ModuleLoader__.load({
         }
       }
 
-      /** 当前分支名，作为"执行完切回"的目标。 */
+      /** 当前分支名，作为“执行完切回”的目标。 */
       const startBranchOf = () => (repo && typeof repo.current === 'string' ? repo.current : '')
 
-      const runAll = async (fromIndex = 0) => {
+      /**
+       * 打开执行弹窗：用右键的分支预填参数、清空上一次的状态。
+       *
+       * @param active 要执行的模板。
+       * @param branch 右键的分支名，作为参数默认值；为空表示不预填。
+       * @param startIndex 从第几步开始执行（失败重试用）。
+       */
+      const openExecution = (active, branch, startIndex = 0) => {
+        setMenu(null)
+        setSelectedId(active.id)
+        rememberTemplate(active.id)
+        setValues(prefillValues(active, branches, branch))
+        setFollowing((active.variables ?? []).filter(variable => variable.derive).map(variable => variable.key))
+        setStatuses({})
+        setLog([])
+        setRestoreBranch(true)
+        setExecution({
+          templateId: active.id,
+          branch: typeof branch === 'string' ? branch : '',
+          startIndex,
+          phase: 'prepare',
+        })
+      }
+
+      /** 关闭执行弹窗；执行中不允许关闭，避免状态更新落在已卸载的界面逻辑上。 */
+      const closeExecution = () => {
         if (busy) return
+        setExecution(null)
+      }
+
+      /** 右键分支：打开模板菜单。 */
+      const openBranchMenu = (branch, event) => {
+        if (busy) return
+        setMenu({ branch, x: event.clientX, y: event.clientY })
+      }
+
+      /** 从失败横幅重新打开弹窗：按记录里的模板名找回模板，从失败的那一步开始。 */
+      const retryLastFailure = () => {
+        if (!lastFailure) return
+        const found = templates.find(item => item.name === lastFailure.templateName)
+        if (found === undefined) {
+          setLog([{ ok: false, text: '上次失败用的模板已不存在，无法重试' }])
+          return
+        }
+        const index = typeof lastFailure.stepIndex === 'number' ? lastFailure.stepIndex : 0
+        openExecution(found, '', index)
+      }
+
+      /**
+       * 顺序执行步骤，遇到失败即停；整段跑完（或失败停下）后切回起点分支。
+       *
+       * @param active 本次执行使用的模板。
+       * @param fromIndex 起始下标。
+       */
+      const runAll = async (active, fromIndex = 0) => {
+        if (busy || !active) return
         // 步骤会 checkout 到各个目标分支，先记住起点，跑完再切回来。
         const startBranch = startBranchOf()
         setBusy(true)
+        setExecution(prev => (prev === null || prev === undefined ? prev : { ...prev, phase: 'running' }))
         try {
-          for (let i = fromIndex; i < template.steps.length; i += 1) {
-            const outcome = await runOne(i)
+          for (let i = fromIndex; i < active.steps.length; i += 1) {
+            const outcome = await runOne(active, i)
             if (!outcome.ok) break
           }
         } finally {
           await restoreTo(startBranch)
           setBusy(false)
           await refreshRepo()
-        }
-      }
-
-      /**
-       * 只跑一步，跑完同样按开关切回原分支。
-       *
-       * @param index 步骤下标。
-       */
-      const runOneRestoring = async (index) => {
-        if (busy) return
-        const startBranch = startBranchOf()
-        setBusy(true)
-        try {
-          await runOne(index)
-        } finally {
-          await restoreTo(startBranch)
-          setBusy(false)
-          await refreshRepo()
+          setExecution(prev => (prev === null || prev === undefined ? prev : { ...prev, phase: 'done' }))
         }
       }
 
@@ -2462,8 +3114,8 @@ window.__ModuleLoader__.load({
         setTab('edit')
       }
 
-      const failedIndex = template
-        ? template.steps.findIndex(step => statuses[step.id] && statuses[step.id].status === 'failed')
+      const failedStepIndex = executionTemplate
+        ? executionTemplate.steps.findIndex(step => statuses[step.id] && statuses[step.id].status === 'failed')
         : -1
 
       const shared = {
@@ -2476,27 +3128,9 @@ window.__ModuleLoader__.load({
           ...shared,
           repo,
           templates,
-          template,
-          values,
-          statuses,
           busy,
           log,
           error,
-          hasFailure: failedIndex !== -1,
-          restoreBranch,
-          onRestoreBranch: next => setRestoreBranch(next),
-          pending,
-          onCancelRun: () => setPending(null),
-          onConfirmRun: () => {
-            const request = pending
-            setPending(null)
-            if (request === null || request === undefined) return
-            if (request.mode === 'one') void runOneRestoring(request.index)
-            else void runAll(request.fromIndex ?? 0)
-          },
-          onRefresh: () => void refreshRepo(),
-          onReloadTemplates: () => void refreshTemplates(),
-          onPull: () => void pullUpdates(),
           lastFailure,
           failureOpen,
           onToggleFailure: () => setFailureOpen(prev => !prev),
@@ -2504,10 +3138,34 @@ window.__ModuleLoader__.load({
             setLastFailure(null)
             void post(ROUTE.clearLastStep, { sessionId }).catch(() => {})
           },
-          onRetryFailure: () => {
-            const index = lastFailure && typeof lastFailure.stepIndex === 'number' ? lastFailure.stepIndex : -1
-            if (index >= 0 && template && template.steps[index]) setPending({ mode: 'one', index })
+          onRetryFailure: retryLastFailure,
+          onRefresh: () => void refreshRepo(),
+          onPull: () => void pullUpdates(),
+          onSwitchBranch: branch => void switchToBranch(branch),
+          onBranchMenu: openBranchMenu,
+          menu,
+          onCloseMenu: () => setMenu(null),
+          onPickTemplate: active => openExecution(active, menu === null || menu === undefined ? '' : menu.branch),
+          execution,
+          executionTemplate,
+          values,
+          statuses,
+          restoreBranch,
+          onValue: (key, value) => scheduleValue(key, value),
+          onRestoreBranch: next => setRestoreBranch(next),
+          onRun: () => {
+            if (execution === null || execution === undefined || executionTemplate === null) return
+            void runAll(executionTemplate, execution.startIndex)
           },
+          onRetryRun: () => {
+            if (execution === null || execution === undefined || executionTemplate === null) return
+            void runAll(executionTemplate, failedStepIndex < 0 ? 0 : failedStepIndex)
+          },
+          onCancelExecution: closeExecution,
+          onCloseExecution: closeExecution,
+          onAbortMerge: () => void resolveMerge('abort'),
+          onContinueMerge: () => void resolveMerge('continue'),
+          failedIndex: failedStepIndex,
           commitOpen,
           commitMessage,
           commitError,
@@ -2542,23 +3200,6 @@ window.__ModuleLoader__.load({
             closeDiff()
           },
           onCommitSubmit: () => void submitCommit(),
-          onSelectTemplate: id => {
-            setSelectedId(id)
-            rememberTemplate(id)
-          },
-          onValue: (key, value) => {
-            scheduleValue(key, value)
-          },
-          onRunAll: () => setPending({ mode: 'all', fromIndex: 0 }),
-          onAbortMerge: () => void resolveMerge('abort'),
-          onContinueMerge: () => void resolveMerge('continue'),
-          onRunOne: index => setPending({ mode: 'one', index }),
-          onRetryFailed: () => setPending({ mode: 'retry', fromIndex: failedIndex < 0 ? 0 : failedIndex }),
-          onNewTemplate: () => {
-            setDraft(blankTemplate())
-            setLog([])
-            setTab('edit')
-          },
         })
       }
 
@@ -2655,7 +3296,11 @@ window.__ModuleLoader__.load({
       __test: {
         renderRun, renderEdit, post, explain, initialValues, preview, matches,
         blankTemplate, statusView, CSS, computeDerived, applyDerived, propagateDerived,
-        GitFlowPanel, BranchPicker, StepNode, LastFailureBanner, parseDiff, toSplitRows, changeLabel,
+        GitFlowPanel, BranchPicker, StepNode, LastFailureBanner,
+        branchRows, branchTree, collectDirPaths, FolderIcon, BranchList, BranchMenu, ExecutionModal, stepSummary,
+        stepKindLabel, stepPushable, stepFlow,
+        pickVariableFor, prefillValues,
+        parseDiff, toSplitRows, changeLabel,
       },
       apply(ctx) {
         ensureStyles()

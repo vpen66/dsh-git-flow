@@ -6,7 +6,7 @@
  * 状态，避免服务端与浏览器对"现在到第几步"产生分歧。
  */
 
-import { createBranch, createTag, fetchOrigin, mergeInto, pushBranch, pushTag, syncBranch, type GitResult, type SyncMode } from './git.js'
+import { createBranch, createTag, fetchOrigin, mergeInto, pushBranch, pushTag, syncBranch, pullBranch, commitWorkspace, listChanges, type GitResult, type SyncMode } from './git.js'
 import { renderField, type WorkflowStep } from './templates.js'
 
 /** 一步执行完的结果。 */
@@ -60,19 +60,28 @@ export function resolveStep(step: WorkflowStep, values: Record<string, string>):
  */
 export function precheckStep(step: WorkflowStep, values: Record<string, string>): string | null {
   const resolved = resolveStep(step, values)
-  // tag 步骤的 target 是标签名，其余步骤是分支名，提示文案按类型区分。
-  const targetName = resolved.kind === 'tag' ? '标签名' : '目标分支'
+  // target 的含义按步骤类型不同，提示文案跟着区分。
+  const targetName = resolved.kind === 'tag'
+    ? '标签名'
+    : resolved.kind === 'commit'
+      ? '提交说明'
+      : resolved.kind === 'pull'
+        ? '要更新的分支'
+        : '目标分支'
   if (resolved.target.trim() === '') return `${targetName}为空`
   if (/\{[A-Za-z0-9_]+\}/.test(resolved.target)) return `${targetName}还有未填的变量：${resolved.target}`
   if (resolved.kind === 'tag' && /[\s~^:?*\[\\]/.test(resolved.target)) {
     return `标签名不能包含空白或 ~ ^ : ? * [ \\ 等字符：${resolved.target}`
   }
-  // push 步骤只涉及一个分支，没有来源。
-  if (resolved.kind === 'push') return null
+  // push / pull / commit 只涉及一个字段，没有来源。
+  if (resolved.kind === 'push' || resolved.kind === 'pull' || resolved.kind === 'commit') return null
   if (resolved.source.trim() === '') return '来源分支为空'
   if (/\{[A-Za-z0-9_]+\}/.test(resolved.source)) return `来源分支还有未填的变量：${resolved.source}`
-  // 标签名与分支可以重名，只有建分支/合并才需要两者不同。
-  if (resolved.kind !== 'tag' && resolved.source === resolved.target) return '来源与目标是同一个分支'
+  // 标签名与分支可以重名，只有建分支/合并才需要来源与目标不同。
+  if (resolved.source === resolved.target
+    && (resolved.kind === 'create' || resolved.kind === 'merge')) {
+    return '来源与目标是同一个分支'
+  }
   return null
 }
 
@@ -80,8 +89,9 @@ export function precheckStep(step: WorkflowStep, values: Record<string, string>)
  * 执行一个工作流步骤。
  *
  * `create` 建分支（已存在则跳过）；`merge` 合并（目标已包含来源则跳过）；
- * `tag` 在分支最新提交上打轻量标签（标签已存在则跳过）。需要时再推送目标分支或标签。
- * 任何一步都不做 rebase 或冲突自动解决。
+ * `tag` 在分支最新提交上打轻量标签（标签已存在则跳过）；`pull` 把本地分支更新到
+ * 远端最新（已最新或无同名远端分支则跳过）；`commit` 提交工作区全部改动（没有改动
+ * 则跳过）。需要时再推送目标分支或标签。任何一步都不做 rebase 或冲突自动解决。
  *
  * @param cwd 仓库目录。
  * @param step 模板步骤。
@@ -163,6 +173,19 @@ export async function runStep(
       message: `${created.message}；${pushed.message}`,
       output: [created.output, pushed.output].filter(Boolean).join('\n'),
     }
+  }
+
+  if (resolved.kind === 'commit') {
+    const changes = await listChanges(cwd)
+    if (changes.length === 0) {
+      return { ...base, ok: true, skipped: true, message: '工作区没有可提交的改动，跳过提交', output: '' }
+    }
+    return finish(await commitWorkspace(cwd, resolved.target), false)
+  }
+
+  if (resolved.kind === 'pull') {
+    const pulled = await pullBranch(cwd, resolved.target, syncMode)
+    return finish(pulled, pulled.skipped === true)
   }
 
   const merged = await mergeInto(cwd, resolved.source, resolved.target, syncMode)

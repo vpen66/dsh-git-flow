@@ -51,17 +51,24 @@ export interface TemplateVariable {
   derive?: VariableDerive
 }
 
-/** 步骤种类：建分支、合并分支、只把某个分支推到远端，或在分支上打标签。 */
-export type StepKind = 'create' | 'merge' | 'push' | 'tag'
+/** 步骤种类：建分支、合并分支、只把某个分支推到远端、在分支上打标签，或拉取/提交。 */
+export type StepKind = 'create' | 'merge' | 'push' | 'tag' | 'pull' | 'commit'
 
 /** 一个执行步骤。 */
 export interface WorkflowStep {
   /** 稳定标识，前端用来记录每一步的状态。 */
   id: string
   kind: StepKind
-  /** 建分支时的起点、合并时的来源，或打标签时的来源分支。允许 `{变量}`；`push` 步骤不用它。 */
+  /**
+   * 建分支时的起点、合并/打标签时的来源分支。允许 `{变量}`；
+   * `push` / `pull` / `commit` 步骤不用它，固定为空串。
+   */
   source: string
-  /** 建分支/合并的目标分支；`tag` 步骤里表示标签名；`push` 步骤里表示要推送的分支。允许 `{变量}`。 */
+  /**
+   * 建分支/合并的目标分支；`tag` 步骤里表示标签名；`push` 步骤里表示要推送的分支；
+   * `pull` 步骤里表示要更新到远端最新的本地分支；`commit` 步骤里表示提交说明，
+   * 允许 `{变量}`。
+   */
   target: string
   /** 该步之后是否推送目标分支（`tag` 步骤是推送标签）。 */
   push: boolean
@@ -389,10 +396,14 @@ export function validateTemplate(value: unknown): string | null {
     if (typeof step.id !== 'string' || step.id === '') return '步骤缺少 id'
     if (stepIds.has(step.id)) return `步骤 id ${step.id} 重复`
     stepIds.add(step.id)
-    if (step.kind !== 'create' && step.kind !== 'merge' && step.kind !== 'push' && step.kind !== 'tag') {
+    const kind = step.kind
+    if (kind !== 'create' && kind !== 'merge' && kind !== 'push' && kind !== 'tag'
+      && kind !== 'pull' && kind !== 'commit') {
       return `步骤 ${step.id} 的 kind 非法`
     }
-    if (step.kind !== 'push' && (typeof step.source !== 'string' || step.source === '')) {
+    // 只有 create / merge / tag 需要来源；push / pull / commit 的来源可以是空串。
+    const needsSource = kind === 'create' || kind === 'merge' || kind === 'tag'
+    if (needsSource && (typeof step.source !== 'string' || step.source === '')) {
       return `步骤 ${step.id} 缺少 source`
     }
     if (typeof step.target !== 'string' || step.target === '') return `步骤 ${step.id} 缺少 target`
@@ -402,8 +413,8 @@ export function validateTemplate(value: unknown): string | null {
     if (step.note !== undefined && typeof step.note !== 'string') {
       return `步骤 ${step.id} 的 note 必须是字符串`
     }
-    // push 步骤没有来源，只检查目标分支里引用的变量。
-    const fields = step.kind === 'push' ? [step.target] : [step.source ?? '', step.target]
+    // push / pull / commit 步骤没有来源，只检查目标字段里引用的变量。
+    const fields = needsSource ? [step.source ?? '', step.target] : [step.target]
     for (const field of fields) {
       for (const name of placeholdersOf(field)) {
         if (!keys.has(name)) return `步骤 ${step.id} 引用了未声明的变量 {${name}}`
