@@ -51,19 +51,19 @@ export interface TemplateVariable {
   derive?: VariableDerive
 }
 
-/** 步骤种类：建分支、合并分支，或只把某个分支推到远端。 */
-export type StepKind = 'create' | 'merge' | 'push'
+/** 步骤种类：建分支、合并分支、只把某个分支推到远端，或在分支上打标签。 */
+export type StepKind = 'create' | 'merge' | 'push' | 'tag'
 
 /** 一个执行步骤。 */
 export interface WorkflowStep {
   /** 稳定标识，前端用来记录每一步的状态。 */
   id: string
   kind: StepKind
-  /** 建分支时的起点，或合并时的来源。允许 `{变量}`；`push` 步骤不用它。 */
+  /** 建分支时的起点、合并时的来源，或打标签时的来源分支。允许 `{变量}`；`push` 步骤不用它。 */
   source: string
-  /** 建分支/合并的目标分支；`push` 步骤里表示要推送的分支。允许 `{变量}`。 */
+  /** 建分支/合并的目标分支；`tag` 步骤里表示标签名；`push` 步骤里表示要推送的分支。允许 `{变量}`。 */
   target: string
-  /** 该步之后是否推送目标分支。 */
+  /** 该步之后是否推送目标分支（`tag` 步骤是推送标签）。 */
   push: boolean
   /** 可选备注，显示在步骤标题旁。 */
   note?: string
@@ -149,7 +149,7 @@ export function defaultReleaseTemplate(): WorkflowTemplate {
   return {
     id: 'release-default',
     name: '发布流程（默认）',
-    description: '从基础分支拉发布分支，合入功能分支，依次发预发和生产，最后回流',
+    description: '从基础分支拉发布分支，合入功能分支，依次发预发和生产，回流后打版本标签',
     variables: [
       { key: 'base', label: '基础分支', kind: 'pick', pattern: 'develop' },
       { key: 'feature', label: '要合入的功能分支', kind: 'pick', pattern: 'feature/*' },
@@ -161,6 +161,13 @@ export function defaultReleaseTemplate(): WorkflowTemplate {
         // 从 feature/v1.0.1 取 `v1.0.1`，拼成 release/v1.0.1，省一次手填。
         derive: { from: 'feature', take: 'after-slash', prefix: 'release/' },
       },
+      {
+        key: 'tag',
+        label: '版本标签',
+        kind: 'input',
+        // 从 feature/v1.0.1 取 `v1.0.1` 作为标签名。
+        derive: { from: 'feature', take: 'after-slash' },
+      },
     ],
     steps: [
       { id: 's1', kind: 'create', source: '{base}', target: '{release}', push: false, note: '拉出发布分支' },
@@ -169,12 +176,13 @@ export function defaultReleaseTemplate(): WorkflowTemplate {
       { id: 's4', kind: 'merge', source: '{release}', target: 'deploy-prod-default/test', push: true, note: '触发生产' },
       { id: 's5', kind: 'merge', source: '{release}', target: 'develop', push: true, note: '回流开发主线' },
       { id: 's6', kind: 'merge', source: '{release}', target: 'master', push: true, note: '回流主干' },
+      { id: 's7', kind: 'tag', source: '{release}', target: '{tag}', push: true, note: '打版本标签并推送' },
     ],
   }
 }
 
-/** 当前模板文件版本；2 起支持变量推导。 */
-export const TEMPLATE_FILE_VERSION = 2
+/** 当前模板文件版本；2 起支持变量推导，3 起支持打标签步骤。 */
+export const TEMPLATE_FILE_VERSION = 3
 
 /**
  * 计算一个变量的自动填充值。
@@ -238,7 +246,8 @@ export function applyDerived(
 /**
  * 把旧版本模板文件升级到当前版本。
  *
- * 只给内置的发布模板补上 `release` 的推导规则；用户自建模板原样保留，不擅自改动。
+ * 只给内置的发布模板补上 `release` 的推导规则与打标签步骤；用户自建模板原样保留，
+ * 不擅自改动。用户改过内置模板时也只补缺的部分，已有的变量和步骤绝不覆盖。
  *
  * @param templates 读到的模板列表。
  * @param version 原始文件版本。
@@ -248,15 +257,60 @@ export function migrateTemplates(templates: WorkflowTemplate[], version: number)
   if (version >= TEMPLATE_FILE_VERSION) return templates
   return templates.map(template => {
     if (template.id !== 'release-default') return template
-    const variables = (template.variables ?? []).map(variable => {
-      if (variable.key !== 'release' || variable.derive !== undefined) return variable
-      return {
-        ...variable,
-        derive: { from: 'feature', take: 'after-slash' as const, prefix: 'release/' },
-      }
-    })
-    return { ...template, variables }
+    let next = template
+    if (version < 2) {
+      const variables = (next.variables ?? []).map(variable => {
+        if (variable.key !== 'release' || variable.derive !== undefined) return variable
+        return {
+          ...variable,
+          derive: { from: 'feature', take: 'after-slash' as const, prefix: 'release/' },
+        }
+      })
+      next = { ...next, variables }
+    }
+    if (version < 3) next = addReleaseTag(next)
+    return next
   })
+}
+
+/**
+ * 给内置发布模板补上打标签的变量与步骤。
+ *
+ * 只在模板仍然声明 `release` 变量时补：用户可能已把内置模板改成完全不同的流程，
+ * 这时塞一个引用 `{release}` 的步骤会让模板校验失败。
+ *
+ * @param template 内置发布模板。
+ * @returns 补好打标签能力的模板。
+ */
+function addReleaseTag(template: WorkflowTemplate): WorkflowTemplate {
+  const variables = template.variables ?? []
+  const steps = template.steps ?? []
+  if (!variables.some(variable => variable.key === 'release')) return template
+
+  const hasTagVariable = variables.some(variable => variable.key === 'tag')
+  const hasTagStep = steps.some(step => step.kind === 'tag')
+  if (hasTagVariable && hasTagStep) return template
+
+  // 有 feature 变量时让标签名随它自动推导；被用户改名时退化为手填。
+  const tagVariable: TemplateVariable = variables.some(variable => variable.key === 'feature')
+    ? { key: 'tag', label: '版本标签', kind: 'input', derive: { from: 'feature', take: 'after-slash' } }
+    : { key: 'tag', label: '版本标签', kind: 'input' }
+
+  let stepId = 'tag-release'
+  for (let nth = 2; steps.some(step => step.id === stepId); nth += 1) stepId = `tag-release-${nth}`
+
+  return {
+    ...template,
+    variables: hasTagVariable ? variables : [...variables, tagVariable],
+    steps: hasTagStep ? steps : [...steps, {
+      id: stepId,
+      kind: 'tag',
+      source: '{release}',
+      target: '{tag}',
+      push: true,
+      note: '打版本标签并推送',
+    }],
+  }
 }
 
 /**
@@ -335,7 +389,7 @@ export function validateTemplate(value: unknown): string | null {
     if (typeof step.id !== 'string' || step.id === '') return '步骤缺少 id'
     if (stepIds.has(step.id)) return `步骤 id ${step.id} 重复`
     stepIds.add(step.id)
-    if (step.kind !== 'create' && step.kind !== 'merge' && step.kind !== 'push') {
+    if (step.kind !== 'create' && step.kind !== 'merge' && step.kind !== 'push' && step.kind !== 'tag') {
       return `步骤 ${step.id} 的 kind 非法`
     }
     if (step.kind !== 'push' && (typeof step.source !== 'string' || step.source === '')) {

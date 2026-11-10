@@ -35,8 +35,10 @@ export interface RepoInfo {
     current: string;
     /** 未完成的合并/变基等操作，正常为 null。 */
     inProgress: string | null;
-    /** 已跟踪文件的改动数量，0 表示干净。 */
+    /** 已跟踪文件的改动数量，0 表示没有已跟踪改动。 */
     dirtyCount: number;
+    /** 未跟踪的条目数量（目录按一条算，不含 .gitignore 忽略的）。 */
+    untrackedCount: number;
     /** 当前未解决的冲突文件；没有冲突时为空数组。 */
     conflicts: string[];
     branches: BranchInfo[];
@@ -75,6 +77,18 @@ export declare function conflictedFiles(cwd: string): Promise<string[]>;
  */
 export declare function readRepo(cwd: string): Promise<RepoInfo>;
 /**
+ * 把工作区里的改动提交到当前分支。
+ *
+ * 暂存全部改动（含未跟踪的新文件，.gitignore 忽略的除外），并用用户填写的提交说明
+ * 提交一次。只提交到本地，不推送。合并/变基进行中时拒绝提交：那种状态应该用面板的
+ * 「继续」收尾，避免把半成品合并提交掉。提交说明走 execFile 的直接参数，不经过 shell。
+ *
+ * @param cwd 仓库目录。
+ * @param message 提交说明；首尾空白会被去掉，空说明拒绝提交。
+ * @returns 执行结果。
+ */
+export declare function commitWorkspace(cwd: string, message: string): Promise<GitResult>;
+/**
  * 从起点分支创建分支；分支已存在时视为跳过而不是失败，便于流程重复执行。
  *
  * @param cwd 仓库目录。
@@ -100,6 +114,36 @@ export declare function mergeInto(cwd: string, source: string, target: string, m
  * @returns 推送结果。
  */
 export declare function pushBranch(cwd: string, branch: string): Promise<GitResult>;
+/**
+ * 本地是否已有同名标签。
+ *
+ * @param cwd 仓库目录。
+ * @param tag 标签名。
+ * @returns 存在为 true。
+ */
+export declare function localTagExists(cwd: string, tag: string): Promise<boolean>;
+/**
+ * 在指定分支的最新提交上打轻量标签；标签已存在时跳过，便于流程重复执行。
+ *
+ * 只写 refs/tags，不 checkout、不改工作区，所以工作区有改动也能打标签。分支本地
+ * 不存在但远端存在时，直接给远端分支上的提交打标签（发布分支有时只在远端）。
+ *
+ * @param cwd 仓库目录。
+ * @param tag 标签名。
+ * @param branch 要打标签的分支。
+ * @returns 执行结果。
+ */
+export declare function createTag(cwd: string, tag: string, branch: string): Promise<GitResult>;
+/**
+ * 推送一个标签到 origin。
+ *
+ * 用 `refs/tags/` 全名推送：分支与标签可能同名，这样不会被 git 解析成别的引用。
+ *
+ * @param cwd 仓库目录。
+ * @param tag 标签名。
+ * @returns 推送结果。
+ */
+export declare function pushTag(cwd: string, tag: string): Promise<GitResult>;
 /**
  * 中止进行中的合并，把工作区恢复到合并之前。
  *

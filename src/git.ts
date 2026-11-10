@@ -44,8 +44,10 @@ export interface RepoInfo {
   current: string
   /** 未完成的合并/变基等操作，正常为 null。 */
   inProgress: string | null
-  /** 已跟踪文件的改动数量，0 表示干净。 */
+  /** 已跟踪文件的改动数量，0 表示没有已跟踪改动。 */
   dirtyCount: number
+  /** 未跟踪的条目数量（目录按一条算，不含 .gitignore 忽略的）。 */
+  untrackedCount: number
   /** 当前未解决的冲突文件；没有冲突时为空数组。 */
   conflicts: string[]
   branches: BranchInfo[]
@@ -59,6 +61,7 @@ const EMPTY_REPO: RepoInfo = {
   current: '',
   inProgress: null,
   dirtyCount: 0,
+  untrackedCount: 0,
   conflicts: [],
   branches: [],
   error: null,
@@ -209,8 +212,12 @@ export async function readRepo(cwd: string): Promise<RepoInfo> {
   const current = (await git(root, ['rev-parse', '--abbrev-ref', 'HEAD'])).output
   const inProgress = await detectInProgress(root)
 
-  const dirty = await git(root, ['status', '--porcelain', '--untracked-files=no'], { allowFail: true })
-  const dirtyCount = dirty.ok && dirty.output !== '' ? dirty.output.split('\n').length : 0
+  // 一次 status 同时得到已跟踪改动与未跟踪条目；未跟踪不阻塞合并，但可以提交。
+  // 用默认的 normal 模式（目录折叠成一条）：整棵新目录只算一项，避免大目录拖慢每次读状态。
+  const status = await git(root, ['status', '--porcelain', '--untracked-files=normal'], { allowFail: true })
+  const statusLines = status.ok && status.output !== '' ? status.output.split('\n') : []
+  const untrackedCount = statusLines.filter(line => line.startsWith('?? ')).length
+  const dirtyCount = statusLines.length - untrackedCount
   const conflicts = await conflictedFiles(root)
 
   const refRes = await git(root, ['for-each-ref', '--format=%(refname)', 'refs/heads'], { allowFail: true })
@@ -222,7 +229,50 @@ export async function readRepo(cwd: string): Promise<RepoInfo> {
   const branches: BranchInfo[] = []
   for (const name of names) branches.push(await readBranch(root, name))
 
-  return { isRepo: true, root, current, inProgress, dirtyCount, conflicts, branches, error: null }
+  return { isRepo: true, root, current, inProgress, dirtyCount, untrackedCount, conflicts, branches, error: null }
+}
+
+/**
+ * 把工作区里的改动提交到当前分支。
+ *
+ * 暂存全部改动（含未跟踪的新文件，.gitignore 忽略的除外），并用用户填写的提交说明
+ * 提交一次。只提交到本地，不推送。合并/变基进行中时拒绝提交：那种状态应该用面板的
+ * 「继续」收尾，避免把半成品合并提交掉。提交说明走 execFile 的直接参数，不经过 shell。
+ *
+ * @param cwd 仓库目录。
+ * @param message 提交说明；首尾空白会被去掉，空说明拒绝提交。
+ * @returns 执行结果。
+ */
+export async function commitWorkspace(cwd: string, message: string): Promise<GitResult> {
+  const text = message.trim()
+  if (text === '') return { ok: false, message: '提交说明不能为空', output: '' }
+  const inProgress = await detectInProgress(cwd)
+  if (inProgress !== null) {
+    return { ok: false, message: `${inProgress}：请先在冲突横幅里点「继续」或「中止」，再提交`, output: '' }
+  }
+  // 在仓库根上执行，会话工作目录可能是仓库的子目录。
+  const rootRes = await git(cwd, ['rev-parse', '--show-toplevel'], { allowFail: true })
+  if (!rootRes.ok || rootRes.output === '') return { ok: false, message: '当前目录不是 git 仓库', output: rootRes.output }
+  const root = rootRes.output
+  const add = await git(root, ['add', '--all'], { allowFail: true })
+  if (!add.ok) return { ok: false, message: '暂存工作区改动失败', output: add.output }
+  const staged = await git(root, ['diff', '--cached', '--name-only'], { allowFail: true })
+  const files = (staged.ok ? staged.output : '').split('\n').map(line => line.trim()).filter(Boolean)
+  if (files.length === 0) return { ok: true, message: '没有可提交的改动', output: '' }
+  const res = await git(root, ['commit', '--quiet', '-m', text], { allowFail: true })
+  if (!res.ok) {
+    // 常见原因是 pre-commit 钩子失败；把 git 的第一行报错带出来，用户才知道要改什么。
+    const detail = res.output.split('\n').map(line => line.trim()).find(line => line !== '') ?? ''
+    return { ok: false, message: detail === '' ? '提交失败' : `提交失败：${detail}`, output: res.output }
+  }
+  const head = await git(root, ['rev-parse', '--short', 'HEAD'], { allowFail: true })
+  const sha = head.ok ? head.output : ''
+  const subject = text.split('\n')[0] ?? ''
+  return {
+    ok: true,
+    message: `已提交 ${files.length} 个文件${sha === '' ? '' : `（${sha}）`}：${subject}`,
+    output: res.output,
+  }
 }
 
 /**
@@ -331,6 +381,57 @@ export async function mergeInto(cwd: string, source: string, target: string, mod
 export async function pushBranch(cwd: string, branch: string): Promise<GitResult> {
   const res = await git(cwd, ['push', '--quiet', 'origin', branch], { allowFail: true })
   return { ok: res.ok, message: res.ok ? `已推送 ${branch}` : `推送 ${branch} 失败`, output: res.output }
+}
+
+/**
+ * 本地是否已有同名标签。
+ *
+ * @param cwd 仓库目录。
+ * @param tag 标签名。
+ * @returns 存在为 true。
+ */
+export async function localTagExists(cwd: string, tag: string): Promise<boolean> {
+  const res = await git(cwd, ['show-ref', '--verify', '--quiet', `refs/tags/${tag}`], { allowFail: true })
+  return res.ok
+}
+
+/**
+ * 在指定分支的最新提交上打轻量标签；标签已存在时跳过，便于流程重复执行。
+ *
+ * 只写 refs/tags，不 checkout、不改工作区，所以工作区有改动也能打标签。分支本地
+ * 不存在但远端存在时，直接给远端分支上的提交打标签（发布分支有时只在远端）。
+ *
+ * @param cwd 仓库目录。
+ * @param tag 标签名。
+ * @param branch 要打标签的分支。
+ * @returns 执行结果。
+ */
+export async function createTag(cwd: string, tag: string, branch: string): Promise<GitResult> {
+  if (await localTagExists(cwd, tag)) return { ok: true, message: `标签 ${tag} 已存在，跳过创建`, output: '' }
+  let base = ''
+  if (await localBranchExists(cwd, branch)) base = branch
+  else if (await remoteBranchExists(cwd, branch)) base = `origin/${branch}`
+  if (base === '') return { ok: false, message: `分支 ${branch} 不存在，无法打标签`, output: '' }
+  const res = await git(cwd, ['tag', tag, base], { allowFail: true })
+  if (!res.ok) return { ok: false, message: `打标签 ${tag} 失败`, output: res.output }
+  const message = base === branch
+    ? `已从 ${branch} 打标签 ${tag}`
+    : `已在远端 ${branch} 上打标签 ${tag}`
+  return { ok: true, message, output: '' }
+}
+
+/**
+ * 推送一个标签到 origin。
+ *
+ * 用 `refs/tags/` 全名推送：分支与标签可能同名，这样不会被 git 解析成别的引用。
+ *
+ * @param cwd 仓库目录。
+ * @param tag 标签名。
+ * @returns 推送结果。
+ */
+export async function pushTag(cwd: string, tag: string): Promise<GitResult> {
+  const res = await git(cwd, ['push', '--quiet', 'origin', `refs/tags/${tag}`], { allowFail: true })
+  return { ok: res.ok, message: res.ok ? `已推送标签 ${tag}` : `推送标签 ${tag} 失败`, output: res.output }
 }
 
 /**

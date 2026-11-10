@@ -6,7 +6,7 @@
  * 状态，避免服务端与浏览器对"现在到第几步"产生分歧。
  */
 
-import { createBranch, fetchOrigin, mergeInto, pushBranch, syncBranch, type GitResult, type SyncMode } from './git.js'
+import { createBranch, createTag, fetchOrigin, mergeInto, pushBranch, pushTag, syncBranch, type GitResult, type SyncMode } from './git.js'
 import { renderField, type WorkflowStep } from './templates.js'
 
 /** 一步执行完的结果。 */
@@ -60,21 +60,28 @@ export function resolveStep(step: WorkflowStep, values: Record<string, string>):
  */
 export function precheckStep(step: WorkflowStep, values: Record<string, string>): string | null {
   const resolved = resolveStep(step, values)
-  if (resolved.target.trim() === '') return '目标分支为空'
-  if (/\{[A-Za-z0-9_]+\}/.test(resolved.target)) return `目标分支还有未填的变量：${resolved.target}`
+  // tag 步骤的 target 是标签名，其余步骤是分支名，提示文案按类型区分。
+  const targetName = resolved.kind === 'tag' ? '标签名' : '目标分支'
+  if (resolved.target.trim() === '') return `${targetName}为空`
+  if (/\{[A-Za-z0-9_]+\}/.test(resolved.target)) return `${targetName}还有未填的变量：${resolved.target}`
+  if (resolved.kind === 'tag' && /[\s~^:?*\[\\]/.test(resolved.target)) {
+    return `标签名不能包含空白或 ~ ^ : ? * [ \\ 等字符：${resolved.target}`
+  }
   // push 步骤只涉及一个分支，没有来源。
   if (resolved.kind === 'push') return null
   if (resolved.source.trim() === '') return '来源分支为空'
   if (/\{[A-Za-z0-9_]+\}/.test(resolved.source)) return `来源分支还有未填的变量：${resolved.source}`
-  if (resolved.source === resolved.target) return '来源与目标是同一个分支'
+  // 标签名与分支可以重名，只有建分支/合并才需要两者不同。
+  if (resolved.kind !== 'tag' && resolved.source === resolved.target) return '来源与目标是同一个分支'
   return null
 }
 
 /**
  * 执行一个工作流步骤。
  *
- * `create` 建分支（已存在则跳过）；`merge` 合并（目标已包含来源则跳过），
- * 需要时再推送目标分支。任何一步都不做 rebase 或冲突自动解决。
+ * `create` 建分支（已存在则跳过）；`merge` 合并（目标已包含来源则跳过）；
+ * `tag` 在分支最新提交上打轻量标签（标签已存在则跳过）。需要时再推送目标分支或标签。
+ * 任何一步都不做 rebase 或冲突自动解决。
  *
  * @param cwd 仓库目录。
  * @param step 模板步骤。
@@ -126,6 +133,22 @@ export async function runStep(
     const pushed = await pushBranch(cwd, resolved.target)
     const prefix = sync.status === 'up-to-date' ? '' : `${sync.message}；`
     return finish({ ...pushed, message: `${prefix}${pushed.message}` }, false)
+  }
+
+  if (resolved.kind === 'tag') {
+    // 先拉一次远端：分支可能只存在于远端，标签要指向远端最新提交。
+    await fetchOrigin(cwd)
+    const created = await createTag(cwd, resolved.target, resolved.source)
+    const skipped = created.ok && created.message.includes('跳过创建')
+    if (!created.ok || !resolved.push) return finish(created, skipped)
+    const pushed = await pushTag(cwd, resolved.target)
+    return {
+      ...base,
+      ok: pushed.ok,
+      skipped,
+      message: `${created.message}；${pushed.message}`,
+      output: [created.output, pushed.output].filter(Boolean).join('\n'),
+    }
   }
 
   if (resolved.kind === 'create') {
