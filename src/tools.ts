@@ -1,11 +1,11 @@
 /**
- * 暴露给 AI 的模板工具。
+ * 暴露给 AI 的指令工具。
  *
  * 服务端半侧是零运行时依赖的插件：这里不 import `@deepseek-ai/dsh-tools`，而是按
  * 宿主 `ctx.tools.register` 的结构约定声明最小类型，避免给 link 安装的插件增加依赖。
  *
  * 写入口径与面板一致：先 `validateTemplate` 校验，再交给 `TemplateStore.upsert`
- * （串行读-改-写 + 原子落盘 + 自动备份），所以 AI 写坏数据不会波及整个模板库。
+ * （串行读-改-写 + 原子落盘 + 自动备份），所以 AI 写坏数据不会波及整个指令库。
  *
  * @module dsh-git-flow/tools
  */
@@ -59,7 +59,7 @@ interface StepArgs {
   note?: unknown
 }
 
-/** 工具入参：新增模板。 */
+/** 工具入参：新增指令。 */
 interface AddTemplateArgs {
   id?: unknown
   name?: unknown
@@ -145,14 +145,14 @@ function normalizeStep(raw: StepArgs, index: number): WorkflowStep {
 }
 
 /**
- * 把工具入参收成模板对象；形状不对时抛带中文说明的错误。
+ * 把工具入参收成指令对象；形状不对时抛带中文说明的错误。
  *
  * @param args 工具入参。
- * @returns 待校验的模板。
+ * @returns 待校验的指令。
  */
 function normalizeTemplate(args: AddTemplateArgs): WorkflowTemplate {
   const name = optionalString(args.name)?.trim() ?? ''
-  if (name === '') throw new Error('缺少模板名称 name')
+  if (name === '') throw new Error('缺少指令名称 name')
   const rawSteps = args.steps
   if (!Array.isArray(rawSteps) || rawSteps.length === 0) throw new Error('steps 必须是非空数组')
   const rawVariables = args.variables
@@ -182,9 +182,9 @@ function normalizeTemplate(args: AddTemplateArgs): WorkflowTemplate {
 const ADD_TEMPLATE_PARAMETERS: Record<string, unknown> = {
   type: 'object',
   properties: {
-    name: { type: 'string', description: '模板名称，例如「发布流程（默认）」' },
+    name: { type: 'string', description: '指令名称，例如「发布流程（默认）」' },
     description: { type: 'string', description: '一句话说明' },
-    id: { type: 'string', description: '模板 id；省略时自动生成，覆盖已有模板时必须显式提供' },
+    id: { type: 'string', description: '指令 id；省略时自动生成，覆盖已有指令时必须显式提供' },
     sync: {
       type: 'string',
       enum: ['ff', 'merge', 'rebase'],
@@ -241,10 +241,10 @@ const ADD_TEMPLATE_PARAMETERS: Record<string, unknown> = {
 }
 
 /**
- * 注册模板相关工具。
+ * 注册指令相关工具。
  *
  * @param tools 宿主 tools 服务（结构匹配）。
- * @param store 与面板共享的模板存储。
+ * @param store 与面板共享的指令存储。
  * @returns 注销两个工具的函数。
  */
 export function registerTemplateTools(tools: unknown, store: TemplateStore): () => void {
@@ -253,8 +253,8 @@ export function registerTemplateTools(tools: unknown, store: TemplateStore): () 
 
   disposers.push(service.register({
     name: 'git_flow_add_template',
-    description: '新增或更新一个 Git 工作流模板（存到 ~/.dsh/git-flow/templates.json）。'
-      + '模板由变量和有序步骤组成，步骤 kind 只能是 create / merge / push / tag / pull / commit，分支名可用 {变量} 占位。'
+    description: '新增或更新一个 Git 工作流指令（存到 ~/.dsh/git-flow/templates.json）。'
+      + '指令由变量和有序步骤组成，步骤 kind 只能是 create / merge / push / tag / pull / commit，分支名可用 {变量} 占位。'
       + 'tag 步骤在 source 分支的最新提交上打轻量标签，target 是标签名，push 为 true 时同时推送标签。'
       + 'pull 步骤把本地分支更新到远端最新；commit 步骤提交工作区全部改动，target 是提交说明。'
       + '保存前会自动校验；id 已存在时默认拒绝覆盖。',
@@ -269,24 +269,24 @@ export function registerTemplateTools(tools: unknown, store: TemplateStore): () 
       }
       const template = normalizeTemplate(args as AddTemplateArgs)
       const invalid = validateTemplate(template)
-      if (invalid !== null) throw new Error(`模板校验失败：${invalid}`)
+      if (invalid !== null) throw new Error(`指令校验失败：${invalid}`)
 
       const overwrite = (args as AddTemplateArgs).overwrite === true
       if (!overwrite) {
         const existing = await store.load()
         if (existing.some(item => item.id === template.id)) {
-          throw new Error(`模板 id「${template.id}」已存在；换一个 id，或显式传 overwrite: true 覆盖`)
+          throw new Error(`指令 id「${template.id}」已存在；换一个 id，或显式传 overwrite: true 覆盖`)
         }
       }
       await store.upsert(template)
-      return `已保存模板「${template.name}」（id: ${template.id}，${template.variables.length} 个变量，${template.steps.length} 个步骤）。`
-        + '如果右栏「Git 工作流」面板开着，提醒用户点模板区的刷新按钮或重新打开面板。'
+      return `已保存指令「${template.name}」（id: ${template.id}，${template.variables.length} 个变量，${template.steps.length} 个步骤）。`
+        + '如果右栏「Git 工作流」面板开着，提醒用户点指令区的刷新按钮或重新打开面板。'
     },
   }))
 
   disposers.push(service.register({
     name: 'git_flow_list_templates',
-    description: '列出当前已保存的全部 Git 工作流模板（id、名称、变量、步骤），步骤 kind 支持 create / merge / push / tag / pull / commit（pull 把本地分支更新到远端最新；commit 提交工作区全部改动，target 是提交说明），用于新增或修改前先了解现有模板。',
+    description: '列出当前已保存的全部 Git 工作流指令（id、名称、变量、步骤），步骤 kind 支持 create / merge / push / tag / pull / commit（pull 把本地分支更新到远端最新；commit 提交工作区全部改动，target 是提交说明），用于新增或修改前先了解现有指令。',
     parameters: { type: 'object', properties: {}, additionalProperties: false },
     output: {
       schema: { type: 'string' },
@@ -294,7 +294,7 @@ export function registerTemplateTools(tools: unknown, store: TemplateStore): () 
     },
     execute: async () => {
       const templates = await store.load()
-      if (templates.length === 0) return '当前没有任何模板。'
+      if (templates.length === 0) return '当前没有任何指令。'
       return templates.map(template => {
         const variables = template.variables.length === 0
           ? '无变量'

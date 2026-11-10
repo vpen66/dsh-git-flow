@@ -1,5 +1,5 @@
 /**
- * 工作流执行：把一个模板步骤按变量取值解析成实际分支名，然后执行。
+ * 工作流执行：把一个指令步骤按变量取值解析成实际分支名，然后执行。
  *
  * 只提供「执行一步」这一种原语，由前端按顺序驱动。这样界面上每一步都有独立的
  * 状态与结果，某一步失败时前面的成果保留，可以从失败处重试；引擎自身不保存运行
@@ -11,7 +11,7 @@ import { renderField, type WorkflowStep } from './templates.js'
 
 /** 一步执行完的结果。 */
 export interface StepOutcome {
-  /** 对应模板步骤的 id。 */
+  /** 对应指令步骤的 id。 */
   stepId: string
   kind: WorkflowStep['kind']
   /** 解析后的来源分支。 */
@@ -33,7 +33,7 @@ export interface StepOutcome {
 /**
  * 把步骤里的 `{变量}` 替换成实际值。
  *
- * @param step 模板步骤。
+ * @param step 指令步骤。
  * @param values 变量取值。
  * @returns 解析后的分支名与推送标记。
  */
@@ -54,7 +54,7 @@ export function resolveStep(step: WorkflowStep, values: Record<string, string>):
 /**
  * 检查变量是否都填好了，且解析后没有残留占位符。
  *
- * @param step 模板步骤。
+ * @param step 指令步骤。
  * @param values 变量取值。
  * @returns 错误说明；通过时返回 null。
  */
@@ -94,7 +94,7 @@ export function precheckStep(step: WorkflowStep, values: Record<string, string>)
  * 则跳过）。需要时再推送目标分支或标签。任何一步都不做 rebase 或冲突自动解决。
  *
  * @param cwd 仓库目录。
- * @param step 模板步骤。
+ * @param step 指令步骤。
  * @param values 变量取值。
  * @returns 该步的结果。
  */

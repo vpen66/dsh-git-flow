@@ -1,11 +1,11 @@
 /**
- * 工作流模板的类型、默认值与持久化。
+ * 工作流指令的类型、默认值与持久化。
  *
- * 一个模板 = 一组变量声明 + 一串有序步骤。步骤里的分支名可以写死，也可以写成
+ * 一个指令 = 一组变量声明 + 一串有序步骤。步骤里的分支名可以写死，也可以写成
  * `{变量名}` 占位；执行前由用户填变量，运行时再做替换。因此同一套引擎既能表达
  * "从 dev 拉 release 再回流"这种固定流程，也能表达任意自定义的合并链路。
  *
- * 模板存在用户主目录下（`~/.dsh/git-flow/templates.json`），跨仓库共享，不写进
+ * 指令存在用户主目录下（`~/.dsh/git-flow/templates.json`），跨仓库共享，不写进
  * 任何项目仓库，避免给业务仓库制造 git 噪音。
  */
 
@@ -35,7 +35,7 @@ export interface VariableDerive {
   prefix?: string
 }
 
-/** 模板变量声明。 */
+/** 指令变量声明。 */
 export interface TemplateVariable {
   /** 占位名，步骤里写 `{key}` 引用。 */
   key: string
@@ -76,7 +76,7 @@ export interface WorkflowStep {
   note?: string
 }
 
-/** 一个完整的工作流模板。 */
+/** 一个完整的工作流指令。 */
 export interface WorkflowTemplate {
   id: string
   name: string
@@ -91,25 +91,25 @@ export interface WorkflowTemplate {
   variables: TemplateVariable[]
   steps: WorkflowStep[]
   /**
-   * 校验失败的原因。只在读取时由服务端补上：损坏的模板不丢弃、不静默删除，
+   * 校验失败的原因。只在读取时由服务端补上：损坏的指令不丢弃、不静默删除，
    * 而是带着原因返回，界面标为「无效」并拒绝执行，用户仍能编辑修复或导出。
    */
   invalid?: string
 }
 
-/** 模板文件的磁盘格式。 */
+/** 指令文件的磁盘格式。 */
 export interface TemplateFile {
   /** 写入时总是当前版本；读取时可能是更旧的版本号。 */
   version: number
   templates: WorkflowTemplate[]
 }
 
-/** 模板文件位置。 */
+/** 指令文件位置。 */
 export function templatesPath(): string {
   return join(homedir(), '.dsh', 'git-flow', 'templates.json')
 }
 
-/** 备份目录；每次覆盖模板文件前把旧版本留一份。 */
+/** 备份目录；每次覆盖指令文件前把旧版本留一份。 */
 export function backupsDir(): string {
   return join(homedir(), '.dsh', 'git-flow', 'backups')
 }
@@ -118,10 +118,10 @@ export function backupsDir(): string {
 const BACKUP_KEEP = 20
 
 /**
- * 把当前模板文件复制一份带时间戳的备份。
+ * 把当前指令文件复制一份带时间戳的备份。
  *
  * 文件不存在时什么也不做。备份失败不阻断保存——保住数据是好事，但不能因此让
- * 用户连模板都存不了。
+ * 用户连指令都存不了。
  */
 export async function backupTemplates(): Promise<void> {
   const source = templatesPath()
@@ -145,12 +145,12 @@ export async function backupTemplates(): Promise<void> {
 }
 
 /**
- * 生成一个默认的发布流程模板。
+ * 生成一个默认的发布流程指令。
  *
  * 与团队现有的发布习惯一致：从 develop 拉 release，合入 feature，先发预发、
  * 再发生产，最后把 release 回流 develop 与 master。用户可以在此之上改。
  *
- * @returns 默认模板。
+ * @returns 默认指令。
  */
 export function defaultReleaseTemplate(): WorkflowTemplate {
   return {
@@ -188,7 +188,7 @@ export function defaultReleaseTemplate(): WorkflowTemplate {
   }
 }
 
-/** 当前模板文件版本；2 起支持变量推导，3 起支持打标签步骤。 */
+/** 当前指令文件版本；2 起支持变量推导，3 起支持打标签步骤。 */
 export const TEMPLATE_FILE_VERSION = 3
 
 /**
@@ -222,7 +222,7 @@ export function computeDerived(variable: TemplateVariable, values: Record<string
 }
 
 /**
- * 把模板里所有变量的推导值算一遍，用于表单初始值。
+ * 把指令里所有变量的推导值算一遍，用于表单初始值。
  *
  * 支持链式推导（A 由 B 推导、B 由 C 推导），最多回溯变量数量轮。
  *
@@ -251,14 +251,14 @@ export function applyDerived(
 }
 
 /**
- * 把旧版本模板文件升级到当前版本。
+ * 把旧版本指令文件升级到当前版本。
  *
- * 只给内置的发布模板补上 `release` 的推导规则与打标签步骤；用户自建模板原样保留，
- * 不擅自改动。用户改过内置模板时也只补缺的部分，已有的变量和步骤绝不覆盖。
+ * 只给内置的发布指令补上 `release` 的推导规则与打标签步骤；用户自建指令原样保留，
+ * 不擅自改动。用户改过内置指令时也只补缺的部分，已有的变量和步骤绝不覆盖。
  *
- * @param templates 读到的模板列表。
+ * @param templates 读到的指令列表。
  * @param version 原始文件版本。
- * @returns 升级后的模板列表。
+ * @returns 升级后的指令列表。
  */
 export function migrateTemplates(templates: WorkflowTemplate[], version: number): WorkflowTemplate[] {
   if (version >= TEMPLATE_FILE_VERSION) return templates
@@ -281,13 +281,13 @@ export function migrateTemplates(templates: WorkflowTemplate[], version: number)
 }
 
 /**
- * 给内置发布模板补上打标签的变量与步骤。
+ * 给内置发布指令补上打标签的变量与步骤。
  *
- * 只在模板仍然声明 `release` 变量时补：用户可能已把内置模板改成完全不同的流程，
- * 这时塞一个引用 `{release}` 的步骤会让模板校验失败。
+ * 只在指令仍然声明 `release` 变量时补：用户可能已把内置指令改成完全不同的流程，
+ * 这时塞一个引用 `{release}` 的步骤会让指令校验失败。
  *
- * @param template 内置发布模板。
- * @returns 补好打标签能力的模板。
+ * @param template 内置发布指令。
+ * @returns 补好打标签能力的指令。
  */
 function addReleaseTag(template: WorkflowTemplate): WorkflowTemplate {
   const variables = template.variables ?? []
@@ -321,19 +321,19 @@ function addReleaseTag(template: WorkflowTemplate): WorkflowTemplate {
 }
 
 /**
- * 校验一个模板对象是否可以安全执行。
+ * 校验一个指令对象是否可以安全执行。
  *
  * @param value 待校验的未知值。
  * @returns 错误说明；通过时返回 null。
  */
 export function validateTemplate(value: unknown): string | null {
-  // 必须是全函数：AI 工具和模板文件都会传来不可信结构，这里抛异常会让
-  // load() 的兜底 catch 把整个模板文件重写成默认模板。
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return '模板必须是对象'
+  // 必须是全函数：AI 工具和指令文件都会传来不可信结构，这里抛异常会让
+  // load() 的兜底 catch 把整个指令文件重写成默认指令。
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return '指令必须是对象'
   const template = value as Partial<WorkflowTemplate>
-  if (typeof template.id !== 'string' || template.id === '') return '模板缺少 id'
-  if (typeof template.name !== 'string' || template.name === '') return '模板缺少名称'
-  if (!Array.isArray(template.steps) || template.steps.length === 0) return '模板至少要有一个步骤'
+  if (typeof template.id !== 'string' || template.id === '') return '指令缺少 id'
+  if (typeof template.name !== 'string' || template.name === '') return '指令缺少名称'
+  if (!Array.isArray(template.steps) || template.steps.length === 0) return '指令至少要有一个步骤'
   if (!Array.isArray(template.variables)) return 'variables 必须是数组'
   if (template.sync !== undefined
     && template.sync !== 'ff' && template.sync !== 'merge' && template.sync !== 'rebase') {
@@ -442,7 +442,7 @@ export function placeholdersOf(field: string): string[] {
 /**
  * 把 `{变量}` 替换成实际值。
  *
- * @param field 模板字段。
+ * @param field 指令字段。
  * @param values 变量取值。
  * @returns 替换后的分支名。
  */
@@ -450,9 +450,9 @@ export function renderField(field: string, values: Record<string, string>): stri
   return field.replace(/\{([A-Za-z0-9_]+)\}/g, (_whole, name: string) => values[name] ?? `{${name}}`)
 }
 
-/** 模板存储：读、写、初始化。 */
+/** 指令存储：读、写、初始化。 */
 export class TemplateStore {
-  /** 串行化模板文件的每一次读-改-写，避免并发保存互相覆盖。 */
+  /** 串行化指令文件的每一次读-改-写，避免并发保存互相覆盖。 */
   private queue: Promise<unknown> = Promise.resolve()
 
   /**
@@ -468,20 +468,20 @@ export class TemplateStore {
   }
 
   /**
-   * 读取全部模板；文件不存在时写入默认模板再返回。
+   * 读取全部指令；文件不存在时写入默认指令再返回。
    *
-   * @returns 模板列表。
+   * @returns 指令列表。
    */
   async load(): Promise<WorkflowTemplate[]> {
     return this.enqueue(() => this.readForWrite())
   }
 
   /**
-   * 读全部模板，并按需写回默认模板或迁移结果。
+   * 读全部指令，并按需写回默认指令或迁移结果。
    *
    * 只在队列任务内部调用：它可能写盘，但不会再次入队，因此不会自锁。
    *
-   * @returns 模板列表。
+   * @returns 指令列表。
    */
   private async readForWrite(): Promise<WorkflowTemplate[]> {
     try {
@@ -492,7 +492,7 @@ export class TemplateStore {
         // 坏条目不再直接丢弃：只剩 id 就保留并标记原因，避免下次保存把用户数据
         // 永久抹掉。只有连对象都不是的才跳过。
         // 单条校验必须整体 try/catch：校验器一旦抛异常，外层 catch 会把整个文件
-        // 重写成默认模板（AI 工具写进来的坏数据最容易触发）。
+        // 重写成默认指令（AI 工具写进来的坏数据最容易触发）。
         const usable: WorkflowTemplate[] = []
         for (const raw of file.templates) {
           if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) continue
@@ -502,7 +502,7 @@ export class TemplateStore {
           try {
             invalid = validateTemplate(template)
           } catch {
-            invalid = '模板结构损坏，无法校验'
+            invalid = '指令结构损坏，无法校验'
           }
           if (invalid === null) {
             // 校验通过：清掉历史遗留的 invalid 标记，避免修好之后永远显示"有问题"。
@@ -522,7 +522,7 @@ export class TemplateStore {
       }
       return [defaultReleaseTemplate()]
     } catch {
-      // 解析失败或读不到文件：种入默认模板；旧文件由 writeNow 里的备份保留。
+      // 解析失败或读不到文件：种入默认指令；旧文件由 writeNow 里的备份保留。
       const seeded = [defaultReleaseTemplate()]
       await this.writeNow(seeded)
       return seeded
@@ -530,20 +530,20 @@ export class TemplateStore {
   }
 
   /**
-   * 覆盖写入全部模板。
+   * 覆盖写入全部指令。
    *
-   * @param templates 模板列表。
+   * @param templates 指令列表。
    */
   async save(templates: WorkflowTemplate[]): Promise<void> {
     await this.enqueue(() => this.writeNow(templates))
   }
 
   /**
-   * 原子写入模板文件：先写临时文件再 rename。
+   * 原子写入指令文件：先写临时文件再 rename。
    *
    * 直接覆盖时若进程崩溃会留下截断 JSON，下一次 load() 只能靠备份找回。
    *
-   * @param templates 模板列表。
+   * @param templates 指令列表。
    */
   private async writeNow(templates: WorkflowTemplate[]): Promise<void> {
     // 覆盖前先留一份，防止误删/误改无回退。
@@ -563,10 +563,10 @@ export class TemplateStore {
   }
 
   /**
-   * 新增或更新一个模板。
+   * 新增或更新一个指令。
    *
-   * @param template 模板对象。
-   * @returns 保存后的全部模板。
+   * @param template 指令对象。
+   * @returns 保存后的全部指令。
    */
   async upsert(template: WorkflowTemplate): Promise<WorkflowTemplate[]> {
     return this.enqueue(async () => {
@@ -583,9 +583,9 @@ export class TemplateStore {
   }
 
   /**
-   * 确保内置的默认发布模板存在；已被删除时重新加回来。
+   * 确保内置的默认发布指令存在；已被删除时重新加回来。
    *
-   * @returns 恢复后的全部模板，以及这次是否真的补上了。
+   * @returns 恢复后的全部指令，以及这次是否真的补上了。
    */
   async ensureDefault(): Promise<{ templates: WorkflowTemplate[]; restored: boolean }> {
     return this.enqueue(async () => {
@@ -600,10 +600,10 @@ export class TemplateStore {
   }
 
   /**
-   * 删除一个模板。
+   * 删除一个指令。
    *
-   * @param id 模板 id。
-   * @returns 删除后的全部模板。
+   * @param id 指令 id。
+   * @returns 删除后的全部指令。
    */
   async remove(id: string): Promise<WorkflowTemplate[]> {
     return this.enqueue(async () => {

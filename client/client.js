@@ -8,8 +8,8 @@
  * 底色与文字尽量复用宿主的 `--dsw-*` 设计变量，因此浅色主题下依然可读。
  *
  * 面板有两个页签：
- * - 执行：分支列表（左键切换、右键选模板执行）；参数与执行进度在选择模板后的弹窗里。
- * - 模板：新建/编辑/删除模板，自由增删步骤、调整顺序、勾选是否推送。
+ * - 执行：分支列表（左键切换、右键选指令执行）；参数与执行进度在选择指令后的弹窗里。
+ * - 指令：新建/编辑/删除指令，自由增删步骤、调整顺序、勾选是否推送。
  *
  * 展示逻辑抽在 `renderRun` / `renderEdit` 里：接收完整状态快照并返回 React 树，
  * 不读 hook、不发请求，因此可以脱离浏览器直接测试。
@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const TAB_KIND = 'git-flow'
     /** 样式表 <style> 的 id，用于幂等注入。 */
     const STYLE_ID = 'dsh-git-flow-style'
-    /** 记住上次选中的模板，重开面板时回到它，而不是跳回第一个。 */
+    /** 记住上次选中的指令，重开面板时回到它，而不是跳回第一个。 */
     const LAST_TEMPLATE_KEY = 'dsh-git-flow:last-template'
     /** 记住折叠的分支目录：只存被折叠的路径，其余默认展开。 */
     const COLLAPSED_KEY = 'dsh-git-flow:collapsed-groups'
@@ -148,7 +148,7 @@ window.__ModuleLoader__.load({
   color:var(--dgf-dim); min-width:84px; flex:none}
 .dgf-grow{flex:1; min-width:0}
 
-/* 模板列表：一行一个卡片，点开的那张在下方展开配置 */
+/* 指令列表：一行一个卡片，点开的那张在下方展开配置 */
 .dgf-tpllist{display:flex; flex-direction:column; gap:6px}
 .dgf-tplrow{position:relative; border:1px solid var(--dgf-line); border-radius:10px; overflow:hidden;
   background:linear-gradient(180deg, rgba(120,180,255,.05), rgba(120,180,255,.015));
@@ -232,6 +232,7 @@ window.__ModuleLoader__.load({
 .dgf-resume{font-size:10.5px; line-height:1.5; color:#a5f3fc; background:rgba(34,211,238,.08);
   border:1px solid rgba(34,211,238,.28); border-radius:7px; padding:5px 7px}
 
+.dgf-chip.dgf-keep-case, .dgf-menu-title.dgf-keep-case{text-transform:none; letter-spacing:0}
 .dgf-chip{font-size:9px; letter-spacing:.08em; text-transform:uppercase; padding:1.5px 6px;
   border-radius:5px; border:1px solid var(--dgf-line); color:var(--dgf-dim);
   white-space:nowrap; line-height:1.4}
@@ -412,7 +413,7 @@ window.__ModuleLoader__.load({
     color-mix(in srgb, var(--dsw-alias-bg-base,#0a0e14) 92%, transparent) 45%)}
 .dgf-dock .dgf-btn{flex:1; padding:7px 10px}
 
-/* 分支列表：左键切换当前分支，右键弹出「用模板执行」菜单 */
+/* 分支列表：左键切换当前分支，右键弹出「用指令执行」菜单 */
 .dgf-branches{display:flex; flex-direction:column; gap:1px; max-height:210px; overflow-y:auto; padding:3px;
   border-radius:8px; background:rgba(120,180,255,.04);
   border:1px solid color-mix(in srgb, var(--dgf-line) 65%, transparent)}
@@ -509,11 +510,11 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 读上次选中的模板 id。
+     * 读上次选中的指令 id。
      *
      * 存储不可用（隐私模式、被禁用）时返回空串，功能退化为「选第一个」，不影响使用。
      *
-     * @returns 模板 id；没有记录时为空串。
+     * @returns 指令 id；没有记录时为空串。
      */
     function readLastTemplate() {
       try {
@@ -524,9 +525,9 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 记住当前选中的模板 id。
+     * 记住当前选中的指令 id。
      *
-     * @param id 模板 id；传空串表示清除记录。
+     * @param id 指令 id；传空串表示清除记录。
      */
     function rememberTemplate(id) {
       try {
@@ -600,20 +601,20 @@ window.__ModuleLoader__.load({
       return new RegExp(`^${escaped.join('.*')}$`).test(name)
     }
 
-    /** 新建空模板的默认骨架。 */
+    /** 新建空指令的默认骨架。 */
     function blankTemplate() {
       return {
         id: `tpl-${Date.now().toString(36)}`,
-        name: '新模板',
+        name: '新指令',
         variables: [{ key: 'base', label: '基础分支', kind: 'pick', pattern: '*' }],
         steps: [{ id: 's1', kind: 'create', source: '{base}', target: 'release/x', push: false }],
       }
     }
 
     /**
-     * 按模板声明初始化变量取值。
+     * 按指令声明初始化变量取值。
      *
-     * @param template 模板。
+     * @param template 指令。
      * @param branches 仓库现有分支名。
      * @returns 变量字典。
      */
@@ -637,7 +638,7 @@ window.__ModuleLoader__.load({
     /**
      * 把 `{变量}` 替换成实际值，用于预览。
      *
-     * @param field 模板字段。
+     * @param field 指令字段。
      * @param values 变量取值。
      * @returns 预览文本。
      */
@@ -729,10 +730,10 @@ window.__ModuleLoader__.load({
     /**
      * 给右键的分支挑一个最合适的 `pick` 变量：优先通配符最具体的那个。
      *
-     * 例如默认模板里 `{base}` 的模式是 `*`、`{feature}` 是 `feature/*`，
+     * 例如默认指令里 `{base}` 的模式是 `*`、`{feature}` 是 `feature/*`，
      * 右键 `feature/v1.0.1` 应该落到 `{feature}` 而不是 `{base}`。
      *
-     * @param variables 模板变量声明。
+     * @param variables 指令变量声明。
      * @param branch 右键的分支名；空串表示不预填。
      * @returns 变量声明；没有 pick 变量或分支为空时返回 null。
      */
@@ -749,12 +750,12 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 用右键的分支给模板变量预填默认值。
+     * 用右键的分支给指令变量预填默认值。
      *
      * 只改动一个最匹配的 `pick` 变量，再按推导规则补齐 release/tag 之类的字段；
-     * 弹窗里用户仍然可以改。分支为空（例如从失败横幅重试）时只按模板默认值初始化。
+     * 弹窗里用户仍然可以改。分支为空（例如从失败横幅重试）时只按指令默认值初始化。
      *
-     * @param template 模板。
+     * @param template 指令。
      * @param branches 仓库现有分支名。
      * @param branch 右键的分支名。
      * @returns 预填后的变量取值。
@@ -1000,17 +1001,17 @@ window.__ModuleLoader__.load({
             className: 'dgf-tab',
             'data-on': props.tab === 'edit' ? 'true' : 'false',
             onClick: props.onEditTab,
-          }, '模板')))
+          }, '指令')))
     }
 
     /**
      * 分支选择器：可点选的下拉 + 可输入过滤 + 允许手填。
      *
-     * 步骤里的「来源 / 目标」既可能是模板变量（`{feature}`），也可能是仓库里现有的
+     * 步骤里的「来源 / 目标」既可能是指令变量（`{feature}`），也可能是仓库里现有的
      * 分支，还可能是这次要新建、暂时不存在的分支。所以三样都要能用：下拉点选、
      * 输入过滤、直接手打。
      *
-     * @param props `value`、`variables`（模板变量）、`branches`（仓库分支）、`onChange`。
+     * @param props `value`、`variables`（指令变量）、`branches`（仓库分支）、`onChange`。
      * @returns React 节点。
      */
     function BranchPicker(props) {
@@ -1262,7 +1263,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 分支列表：按 `/` 折叠成目录树，左键切换当前分支，右键弹出「用模板执行」菜单。
+     * 分支列表：按 `/` 折叠成目录树，左键切换当前分支，右键弹出「用指令执行」菜单。
      *
      * 当前分支所在的目录链默认展开，其它目录默认收起；点目录行切换展开状态，
      * 右上角按钮一次展开或收起全部。
@@ -1340,7 +1341,7 @@ window.__ModuleLoader__.load({
           row.remote ? h('span', { className: 'dgf-chip' }, '远端') : null,
           h('span', { className: 'dgf-branch-meta' },
             row.remote
-              ? '右键用模板执行'
+              ? '右键用指令执行'
               : [row.ahead > 0 ? `↑${row.ahead}` : '', row.behind > 0 ? `↓${row.behind}` : '',
                 row.subject].filter(Boolean).join(' · ')))]
         }
@@ -1368,7 +1369,7 @@ window.__ModuleLoader__.load({
         h('div', { className: 'dgf-sec-head' },
           h('span', { className: 'dgf-sec-title' }, `分支 · ${total}`),
           h('div', { style: { display: 'flex', gap: '4px' } },
-            h('span', { className: 'dgf-chip', 'data-tone': 'ok' }, current ? `当前 ${current}` : '游离 HEAD'),
+            h('span', { className: 'dgf-chip dgf-keep-case', 'data-tone': 'ok' }, current ? `当前 ${current}` : '游离 HEAD'),
             h('span', { className: 'dgf-chip', 'data-tone': state.tone }, state.text))),
         total === 0
           ? h('div', { className: 'dgf-empty' }, '没有可用分支')
@@ -1386,7 +1387,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 分支右键菜单：选模板执行，或切换到这个分支。
+     * 分支右键菜单：选指令执行，或切换到这个分支。
      *
      * 用全屏透明遮罩承载「点击外部关闭」，菜单本身固定定位，位置按视口夹紧。
      *
@@ -1412,17 +1413,17 @@ window.__ModuleLoader__.load({
         style: { left: `${left}px`, top: `${top}px` },
         onClick: event => event.stopPropagation(),
       },
-      h('div', { className: 'dgf-menu-title' }, `分支 ${branch}`),
-      h('div', { className: 'dgf-menu-title' }, '用模板执行'),
+      h('div', { className: 'dgf-menu-title dgf-keep-case' }, `分支 ${branch}`),
+      h('div', { className: 'dgf-menu-title' }, '用指令执行'),
       templates === null || templates === undefined || templates.length === 0
         ? h('div', { className: 'dgf-caption', style: { padding: '2px 8px' } },
-          '还没有模板，去「模板」页签新建')
+          '还没有指令，去「指令」页签新建')
         : templates.map(template => h('button', {
           key: template.id,
           type: 'button',
           className: 'dgf-menu-item',
           disabled: template.invalid !== undefined && template.invalid !== null && template.invalid !== '',
-          title: template.invalid ? `模板有问题：${template.invalid}` : `用「${template.name}」执行`,
+          title: template.invalid ? `指令有问题：${template.invalid}` : `用「${template.name}」执行`,
           onClick: () => onPickTemplate(template),
         },
         h('span', { className: 'dgf-menu-item-text' }, template.name),
@@ -1512,7 +1513,7 @@ window.__ModuleLoader__.load({
      *
      * 推送没有来源；拉取/提交只有一个动作对象，都不显示来源箭头。
      *
-     * @param step 模板步骤。
+     * @param step 指令步骤。
      * @param source 解析后的来源。
      * @param target 解析后的目标。
      * @returns React 节点数组。
@@ -1672,7 +1673,7 @@ window.__ModuleLoader__.load({
     /**
      * 把一步解析成「从哪到哪」的中文说明，用于执行弹窗的流程预览。
      *
-     * @param step 模板步骤。
+     * @param step 指令步骤。
      * @param values 变量取值。
      * @returns 说明文本。
      */
@@ -1698,7 +1699,7 @@ window.__ModuleLoader__.load({
      * prepare 阶段：参数表单 + 解析后的完整流程 + 执行/取消；
      * running/done 阶段：逐步状态、日志、冲突处理与失败重试。关闭后执行日志仍留在面板里。
      *
-     * @param props 模板、阶段、变量取值、步骤状态与回调。
+     * @param props 指令、阶段、变量取值、步骤状态与回调。
      * @returns React 节点。
      */
     function ExecutionModal(props) {
@@ -1711,7 +1712,7 @@ window.__ModuleLoader__.load({
       const commitSteps = steps
         .map((step, index) => ({ step, index }))
         .filter(item => item.step.kind === 'commit')
-      /** 显示/执行时用的提交说明：用户改过用改后的值，否则按模板内容和变量解析。 */
+      /** 显示/执行时用的提交说明：用户改过用改后的值，否则按指令内容和变量解析。 */
       const commitDisplay = step => (step.kind === 'commit' && commitOverrides[step.id] !== undefined
         ? commitOverrides[step.id]
         : preview(step.target, values))
@@ -1740,7 +1741,7 @@ window.__ModuleLoader__.load({
             : h('span', { className: 'dgf-chip', 'data-tone': 'skip' }, `还有 ${missing} 个未填`)),
         h('div', { key: 'vars', className: 'dgf-exec-vars' },
           variables.length === 0
-            ? h('div', { className: 'dgf-caption' }, '这个模板没有变量')
+            ? h('div', { className: 'dgf-caption' }, '这个指令没有变量')
             : variables.map(variable => h(VariableRow, {
               key: variable.key,
               variable,
@@ -1778,20 +1779,20 @@ window.__ModuleLoader__.load({
                     className: 'dgf-btn',
                     'data-variant': 'ghost',
                     style: { flex: 'none', padding: '2px 6px', fontSize: '9px' },
-                    title: '恢复模板里的提交说明',
+                    title: '恢复指令里的提交说明',
                     onClick: () => props.onCommitOverride(item.step.id, null),
-                  }, '↺ 模板')
+                  }, '↺ 指令')
                   : null)
             }),
             h('div', { key: 'commit-hint', className: 'dgf-confirm-hint' },
-              '默认取模板里的提交说明；直接修改只影响这次执行。清空后不会自动回填，可重新输入或点「↺ 模板」恢复'),
+              '默认取指令里的提交说明；直接修改只影响这次执行。清空后不会自动回填，可重新输入或点「↺ 指令」恢复'),
           ]),
         h('div', { key: 'flow-head', className: 'dgf-sec-head' },
           h('span', { className: 'dgf-sec-title' }, `流程 · ${steps.length} 步`),
           h('span', { className: 'dgf-meter-text' }, missing === 0 && !commitBlank ? '可执行' : '待填写')),
         h('div', { key: 'flow', className: 'dgf-confirm-steps' },
           steps.length === 0
-            ? h('div', { className: 'dgf-caption' }, '这个模板还没有步骤，去「模板」页签添加')
+            ? h('div', { className: 'dgf-caption' }, '这个指令还没有步骤，去「指令」页签添加')
             : steps.map((step, index) => h('div', { key: step.id, className: 'dgf-confirm-step' },
               h('span', { className: 'dgf-sha' }, `${index + 1}.`),
               h('span', { className: 'dgf-confirm-text' }, stepSummary(displayStep(step), values)),
@@ -2037,7 +2038,7 @@ window.__ModuleLoader__.load({
             dirty ? ` · 已跟踪改动 ${repo.dirtyCount}` : (untracked ? '' : ' · 工作区干净'),
             untracked ? ` · 未跟踪 ${repo.untrackedCount}` : ''),
 
-          // 分支列表：左键切换，右键选模板执行。
+          // 分支列表：左键切换，右键选指令执行。
           h(BranchList, {
             repo,
             busy,
@@ -2130,7 +2131,7 @@ window.__ModuleLoader__.load({
                 }, busy === true ? '提交中…' : '提交'))))
           : null,
 
-        // 右键菜单：选模板执行，或切换到这个分支。
+        // 右键菜单：选指令执行，或切换到这个分支。
         view.menu === null || view.menu === undefined
           ? null
           : h(BranchMenu, {
@@ -2176,18 +2177,18 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 渲染「模板」页签。纯函数。
+     * 渲染「指令」页签。纯函数。
      *
-     * @param view 草稿模板、模板列表与回调。
+     * @param view 草稿指令、指令列表与回调。
      * @returns React 节点。
      */
     /**
-     * 渲染一个模板的编辑表单：名称、说明、变量、步骤、预览。
+     * 渲染一个指令的编辑表单：名称、说明、变量、步骤、预览。
      *
-     * 只在列表里展开的那一项调用，因此它不关心"当前是哪个模板"。
+     * 只在列表里展开的那一项调用，因此它不关心"当前是哪个指令"。
      *
      * @param view 回调集合。
-     * @param draft 正在编辑的模板草稿。
+     * @param draft 正在编辑的指令草稿。
      * @returns React 节点数组。
      */
     function renderTemplateBody(view, draft) {
@@ -2197,7 +2198,7 @@ window.__ModuleLoader__.load({
 
       return [
         view.draftInvalid
-          ? h('div', { className: 'dgf-alert' }, `这个模板有问题：${view.draftInvalid}。修好之前无法保存。`)
+          ? h('div', { className: 'dgf-alert' }, `这个指令有问题：${view.draftInvalid}。修好之前无法保存。`)
           : null,
 
         // 基本信息
@@ -2469,7 +2470,7 @@ window.__ModuleLoader__.load({
             'data-variant': 'primary',
             disabled: view.busy === true,
             onClick: view.onSaveTemplate,
-          }, view.busy ? '保存中…' : '保存模板'),
+          }, view.busy ? '保存中…' : '保存指令'),
           h('button', { className: 'dgf-btn', onClick: view.onDuplicateTemplate }, '复制'),
           h('button', {
             className: 'dgf-btn',
@@ -2491,9 +2492,9 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 渲染「模板」页签：模板列表，点开某一项在其下方展开配置。
+     * 渲染「指令」页签：指令列表，点开某一项在其下方展开配置。
      *
-     * @param view 草稿模板、模板列表与回调。
+     * @param view 草稿指令、指令列表与回调。
      * @returns React 节点。
      */
     function renderEdit(view) {
@@ -2505,12 +2506,12 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dgf-scroll' },
             h('div', { className: 'dgf-sec' },
               h('div', { className: 'dgf-sec-head' },
-                h('span', { className: 'dgf-sec-title' }, '模板'),
+                h('span', { className: 'dgf-sec-title' }, '指令'),
                 h('div', { style: { display: 'flex', gap: '4px' } },
                   h('button', {
                     className: 'dgf-btn',
                     'data-variant': 'ghost',
-                    title: '重新从磁盘读取模板（AI 新增模板后点这里）',
+                    title: '重新从磁盘读取指令（AI 新增指令后点这里）',
                     onClick: view.onReloadTemplates,
                   }, '↻'),
                   h('button', {
@@ -2519,13 +2520,13 @@ window.__ModuleLoader__.load({
                   h('button', { className: 'dgf-btn', onClick: view.onRestoreDefault }, '恢复默认'))),
               templates.length === 0
                 ? h('div', { className: 'dgf-empty' },
-                  h('div', null, '还没有模板'),
+                  h('div', null, '还没有指令'),
                   h('button', {
                     className: 'dgf-btn',
                     'data-variant': 'primary',
                     style: { marginTop: '8px' },
                     onClick: view.onRestoreDefault,
-                  }, '恢复默认模板'))
+                  }, '恢复默认指令'))
                 : h('div', { className: 'dgf-tpllist' }, templates.map(item => h('div', {
                   key: item.id,
                   className: 'dgf-tplrow',
@@ -2540,7 +2541,7 @@ window.__ModuleLoader__.load({
             h(LogView, { log })))
       }
 
-      // 列表以已保存的模板为准，但"新建"出来的草稿还没保存，必须也占一行，
+      // 列表以已保存的指令为准，但"新建"出来的草稿还没保存，必须也占一行，
       // 否则点了新建却看不到任何可编辑的东西。
       const savedIds = new Set(templates.map(item => item.id))
       const draftUnsaved = draft !== null && !savedIds.has(draft.id)
@@ -2551,12 +2552,12 @@ window.__ModuleLoader__.load({
         h('div', { className: 'dgf-scroll' },
           h('div', { className: 'dgf-sec' },
             h('div', { className: 'dgf-sec-head' },
-              h('span', { className: 'dgf-sec-title' }, `模板 · ${rows.length}`),
+              h('span', { className: 'dgf-sec-title' }, `指令 · ${rows.length}`),
               h('div', { style: { display: 'flex', gap: '4px' } },
                 h('button', {
                   className: 'dgf-btn',
                   'data-variant': 'ghost',
-                  title: '重新从磁盘读取模板（AI 新增模板后点这里）',
+                  title: '重新从磁盘读取指令（AI 新增指令后点这里）',
                   onClick: view.onReloadTemplates,
                 }, '↻'),
                 h('button', {
@@ -2564,7 +2565,7 @@ window.__ModuleLoader__.load({
                 }, '新建'),
                 h('button', { className: 'dgf-btn', onClick: view.onRestoreDefault }, '恢复默认'))),
 
-            // 列表：一行一个模板，点开的那个在下方展开配置。
+            // 列表：一行一个指令，点开的那个在下方展开配置。
             h('div', { className: 'dgf-tpllist' }, rows.map(item => {
               const active = item.id === draft.id
               // 展开中的行用实时草稿渲染，名称等改动立刻反映在行头上。
@@ -2622,16 +2623,16 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState(false)
       const [log, setLog] = React.useState([])
       const [error, setError] = React.useState(null)
-      // 删除要连点两次才生效，避免误触把模板删掉。
+      // 删除要连点两次才生效，避免误触把指令删掉。
       const [confirmDelete, setConfirmDelete] = React.useState(false)
-      // 模板行是否收起。收起只是不显示表单，草稿仍留在内存里，再点开还能接着改。
+      // 指令行是否收起。收起只是不显示表单，草稿仍留在内存里，再点开还能接着改。
       const [collapsed, setCollapsed] = React.useState(false)
       // 流程跑完后把用户送回来时所在的分支，避免停在最后一次合并的目标分支上。
       const [restoreBranch, setRestoreBranch] = React.useState(true)
       // 右键菜单：{ branch, x, y }；执行弹窗：{ templateId, branch, startIndex, phase }。
       const [menu, setMenu] = React.useState(null)
       const [execution, setExecution] = React.useState(null)
-      // 本次执行里手改过的提交说明：stepId -> 文本；空表示跟随模板内容。
+      // 本次执行里手改过的提交说明：stepId -> 文本；空表示跟随指令内容。
       const [commitOverrides, setCommitOverrides] = React.useState({})
       // 最近一次执行失败记录：服务端持久化，面板重开/应用重启后仍能提示。
       const [lastFailure, setLastFailure] = React.useState(null)
@@ -2661,7 +2662,7 @@ window.__ModuleLoader__.load({
         [repo],
       )
       const currentBranch = repo && typeof repo.current === 'string' ? repo.current : ''
-      // 模板页签仍按 selectedId 编辑；执行弹窗用自己记住的模板，避免互相影响。
+      // 指令页签仍按 selectedId 编辑；执行弹窗用自己记住的指令，避免互相影响。
       const template = templates.find(item => item.id === selectedId) ?? templates[0] ?? null
       const executionTemplate = execution === null || execution === undefined
         ? null
@@ -2804,7 +2805,7 @@ window.__ModuleLoader__.load({
         }
       }
 
-      /** 读模板列表。 */
+      /** 读指令列表。 */
       const refreshTemplates = async () => {
         try {
           const data = await post(ROUTE.templates, {})
@@ -2846,7 +2847,7 @@ window.__ModuleLoader__.load({
       /**
        * 执行一个步骤并更新状态。
        *
-       * @param active 本次执行使用的模板。
+       * @param active 本次执行使用的指令。
        * @param index 步骤下标。
        * @returns 该步结果。
        */
@@ -2857,7 +2858,7 @@ window.__ModuleLoader__.load({
         const payload = override === undefined ? step : { ...step, target: override }
         setStatuses(prev => ({ ...prev, [step.id]: { status: 'running', message: '' } }))
         try {
-          // 同步策略随模板走；缺省 merge（分叉时自动合并远端最新）。
+          // 同步策略随指令走；缺省 merge（分叉时自动合并远端最新）。
           const data = await post(ROUTE.step, {
             sessionId,
             step: payload,
@@ -2943,7 +2944,7 @@ window.__ModuleLoader__.load({
       /**
        * 打开执行弹窗：用右键的分支预填参数、清空上一次的状态。
        *
-       * @param active 要执行的模板。
+       * @param active 要执行的指令。
        * @param branch 右键的分支名，作为参数默认值；为空表示不预填。
        * @param startIndex 从第几步开始执行（失败重试用）。
        */
@@ -2971,18 +2972,18 @@ window.__ModuleLoader__.load({
         setExecution(null)
       }
 
-      /** 右键分支：打开模板菜单。 */
+      /** 右键分支：打开指令菜单。 */
       const openBranchMenu = (branch, event) => {
         if (busy) return
         setMenu({ branch, x: event.clientX, y: event.clientY })
       }
 
-      /** 从失败横幅重新打开弹窗：按记录里的模板名找回模板，从失败的那一步开始。 */
+      /** 从失败横幅重新打开弹窗：按记录里的指令名找回指令，从失败的那一步开始。 */
       const retryLastFailure = () => {
         if (!lastFailure) return
         const found = templates.find(item => item.name === lastFailure.templateName)
         if (found === undefined) {
-          setLog([{ ok: false, text: '上次失败用的模板已不存在，无法重试' }])
+          setLog([{ ok: false, text: '上次失败用的指令已不存在，无法重试' }])
           return
         }
         const index = typeof lastFailure.stepIndex === 'number' ? lastFailure.stepIndex : 0
@@ -2992,7 +2993,7 @@ window.__ModuleLoader__.load({
       /**
        * 顺序执行步骤，遇到失败即停；整段跑完（或失败停下）后切回起点分支。
        *
-       * @param active 本次执行使用的模板。
+       * @param active 本次执行使用的指令。
        * @param fromIndex 起始下标。
        */
       const runAll = async (active, fromIndex = 0) => {
@@ -3034,7 +3035,7 @@ window.__ModuleLoader__.load({
         }
       }
 
-      /** 保存当前草稿模板。 */
+      /** 保存当前草稿指令。 */
       const saveTemplate = async () => {
         if (busy || !draft) return
         setBusy(true)
@@ -3047,7 +3048,7 @@ window.__ModuleLoader__.load({
           setTemplates(data.templates ?? [])
           setSelectedId(draft.id)
           rememberTemplate(draft.id)
-          setLog([{ ok: true, text: `已保存模板「${draft.name}」` }])
+          setLog([{ ok: true, text: `已保存指令「${draft.name}」` }])
         } catch (err) {
           setLog([{ ok: false, text: explain(err) }])
         } finally {
@@ -3056,7 +3057,7 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * 删除当前草稿模板；第一次调用只进入确认态。
+       * 删除当前草稿指令；第一次调用只进入确认态。
        */
       const requestDelete = () => {
         if (busy || !draft) return
@@ -3079,7 +3080,7 @@ window.__ModuleLoader__.load({
           setSelectedId(next ? next.id : '')
           rememberTemplate(next ? next.id : '')
           setDraft(next ? JSON.parse(JSON.stringify(next)) : null)
-          setLog([{ ok: true, text: '已删除模板' }])
+          setLog([{ ok: true, text: '已删除指令' }])
         } catch (err) {
           setLog([{ ok: false, text: explain(err) }])
         } finally {
@@ -3110,14 +3111,14 @@ window.__ModuleLoader__.load({
         }
       }
 
-      /** 把内置默认模板加回来。 */
+      /** 把内置默认指令加回来。 */
       const restoreDefault = async () => {
         if (busy) return
         setBusy(true)
         try {
           const data = await post(ROUTE.restore, {})
           setTemplates(data.templates ?? [])
-          setLog([{ ok: true, text: data.restored ? '已恢复默认模板' : '默认模板已存在' }])
+          setLog([{ ok: true, text: data.restored ? '已恢复默认指令' : '默认指令已存在' }])
         } catch (err) {
           setLog([{ ok: false, text: explain(err) }])
         } finally {
@@ -3125,7 +3126,7 @@ window.__ModuleLoader__.load({
         }
       }
 
-      /** 进入编辑页签，用当前模板填充草稿。 */
+      /** 进入编辑页签，用当前指令填充草稿。 */
       const startEdit = () => {
         setDraft(template ? JSON.parse(JSON.stringify(template)) : blankTemplate())
         setConfirmDelete(false)
@@ -3174,7 +3175,7 @@ window.__ModuleLoader__.load({
           commitOverrides,
           onCommitOverride: (stepId, text) => setCommitOverrides(prev => {
             const next = { ...prev }
-            // null/undefined 表示恢复模板内容；空字符串表示这次就是空的（可继续输入）。
+            // null/undefined 表示恢复指令内容；空字符串表示这次就是空的（可继续输入）。
             if (text === null || text === undefined) delete next[stepId]
             else next[stepId] = text
             return next
@@ -3372,7 +3373,7 @@ window.__ModuleLoader__.load({
               id: 'git-flow',
               order: 70,
               title: () => 'Git 工作流',
-              description: () => '自定义步骤的工作流模板与执行',
+              description: () => '自定义步骤的工作流指令与执行',
             }],
           }), 'git-flow: tab type')
         })
