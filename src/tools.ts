@@ -286,7 +286,7 @@ export function registerTemplateTools(tools: unknown, store: TemplateStore): () 
 
   disposers.push(service.register({
     name: 'git_flow_list_templates',
-    description: '列出当前已保存的全部 Git 工作流指令（id、名称、变量、步骤），步骤 kind 支持 create / merge / push / tag / pull / commit（pull 把本地分支更新到远端最新；commit 提交工作区全部改动，target 是提交说明），用于新增或修改前先了解现有指令。',
+    description: '列出当前已保存的全部 Git 工作流指令（id、名称、变量、步骤；组合指令显示它引用的指令链），步骤 kind 支持 create / merge / push / tag / pull / commit（pull 把本地分支更新到远端最新；commit 提交工作区全部改动，target 是提交说明），用于新增或修改前先了解现有指令。',
     parameters: { type: 'object', properties: {}, additionalProperties: false },
     output: {
       schema: { type: 'string' },
@@ -316,8 +316,11 @@ export function registerTemplateTools(tools: unknown, store: TemplateStore): () 
             : step.kind === 'create' || step.kind === 'merge' ? '（推送）' : ''
           return `${index + 1}. ${action}${step.push ? pushed : ''}`
         }).join('；')
+        const compose = Array.isArray(template.compose)
+          ? `组合：${template.compose.map(id => id).join(' → ') || '（空）'}`
+          : `步骤：${steps}`
         const invalid = template.invalid === undefined ? '' : ` [无效：${template.invalid}]`
-        return `- ${template.name}（id: ${template.id}）${invalid}\n  变量：${variables}\n  步骤：${steps}`
+        return `- ${template.name}（id: ${template.id}）${invalid}\n  变量：${variables}\n  ${compose}`
       }).join('\n')
     },
   }))

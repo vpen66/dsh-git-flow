@@ -91,6 +91,11 @@ export interface WorkflowTemplate {
   variables: TemplateVariable[]
   steps: WorkflowStep[]
   /**
+   * 组合指令：按顺序引用其它指令的 id，执行时把被引用指令的步骤展开、变量合并。
+   * 存在 compose 字段（哪怕是空数组）就表示这是组合指令，steps 必须为空。
+   */
+  compose?: string[]
+  /**
    * 校验失败的原因。只在读取时由服务端补上：损坏的指令不丢弃、不静默删除，
    * 而是带着原因返回，界面标为「无效」并拒绝执行，用户仍能编辑修复或导出。
    */
@@ -337,8 +342,23 @@ export function validateTemplate(value: unknown): string | null {
   const template = value as Partial<WorkflowTemplate>
   if (typeof template.id !== 'string' || template.id === '') return '指令缺少 id'
   if (typeof template.name !== 'string' || template.name === '') return '指令缺少名称'
-  if (!Array.isArray(template.steps) || template.steps.length === 0) return '指令至少要有一个步骤'
+  if (!Array.isArray(template.steps)) return 'steps 必须是数组'
   if (!Array.isArray(template.variables)) return 'variables 必须是数组'
+  const compose = Array.isArray(template.compose) ? template.compose : null
+  const composed = compose !== null
+  if (compose !== null) {
+    if (compose.length === 0) return '组合指令至少要引用一个指令'
+    const refs = new Set<string>()
+    for (const raw of compose) {
+      if (typeof raw !== 'string' || raw === '') return '组合引用的指令 id 非法'
+      if (raw === template.id) return '组合指令不能引用自己'
+      if (refs.has(raw)) return `组合引用了重复的指令 ${raw}`
+      refs.add(raw)
+    }
+    if (template.steps.length > 0) return '组合指令的步骤由引用的指令展开，不能直接填写步骤'
+  } else if (template.steps.length === 0) {
+    return '指令至少要有一个步骤'
+  }
   if (template.sync !== undefined
     && template.sync !== 'ff' && template.sync !== 'merge' && template.sync !== 'rebase') {
     return 'sync 只能是 ff、merge 或 rebase'
@@ -392,6 +412,7 @@ export function validateTemplate(value: unknown): string | null {
     }
   }
 
+  if (composed) return null
   const keys = new Set(template.variables.map(variable => (variable as TemplateVariable).key))
   const stepIds = new Set<string>()
   for (const raw of template.steps) {
@@ -426,6 +447,33 @@ export function validateTemplate(value: unknown): string | null {
     }
   }
   return null
+}
+
+/**
+ * 校验组合指令引用的指令是否存在、是否成环（保存时用）。
+ *
+ * @param template 待保存的指令。
+ * @param all 保存后会落盘的全部指令（包含这条）。
+ * @returns 错误说明；合法时返回 null。
+ */
+export function validateComposeRefs(
+  template: WorkflowTemplate,
+  all: WorkflowTemplate[],
+): string | null {
+  if (!Array.isArray(template.compose)) return null
+  const byId = new Map(all.map(item => [item.id, item]))
+  const walk = (item: WorkflowTemplate, path: string[]): string | null => {
+    if (!Array.isArray(item.compose)) return null
+    for (const id of item.compose) {
+      const child = byId.get(id)
+      if (child === undefined) return `组合引用的指令不存在：${id}`
+      if (path.includes(child.id)) return `组合存在循环引用：${[...path, child.id].join(' → ')}`
+      const error = walk(child, [...path, child.id])
+      if (error !== null) return error
+    }
+    return null
+  }
+  return walk(template, [template.id])
 }
 
 /**

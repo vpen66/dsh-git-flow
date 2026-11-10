@@ -33,7 +33,13 @@ import {
 } from './git.js'
 import { runStep, type StepOutcome } from './workflow.js'
 import type { SyncMode } from './git.js'
-import { TemplateStore, validateTemplate, type WorkflowStep, type WorkflowTemplate } from './templates.js'
+import {
+  TemplateStore,
+  validateComposeRefs,
+  validateTemplate,
+  type WorkflowStep,
+  type WorkflowTemplate,
+} from './templates.js'
 import { registerTemplateTools } from './tools.js'
 import { registerAddTemplateCommand } from './command.js'
 import { RunStore } from './runs.js'
@@ -365,13 +371,25 @@ export function apply(ctx: Context): void {
     route(SAVE_PATH, async (body) => {
       const invalid = validateTemplate(body.template)
       if (invalid !== null) return { templates: await store.load(), error: invalid }
-      return { templates: await store.upsert(body.template as WorkflowTemplate) }
+      const template = body.template as WorkflowTemplate
+      if (Array.isArray(template.compose)) {
+        const current = await store.load()
+        const merged = [...current.filter(item => item.id !== template.id), template]
+        const composeInvalid = validateComposeRefs(template, merged)
+        if (composeInvalid !== null) return { templates: current, error: composeInvalid }
+      }
+      return { templates: await store.upsert(template) }
     })
 
     // 指令删除。
     route(DELETE_PATH, async (body) => {
       const id = typeof body.id === 'string' ? body.id : ''
       if (id === '') return { templates: await store.load(), error: '缺少指令 id' }
+      const current = await store.load()
+      const holder = current.find(item => Array.isArray(item.compose) && item.compose.includes(id))
+      if (holder !== undefined) {
+        return { templates: current, error: `指令「${holder.name}」组合引用了它，先修改那个组合指令再删除` }
+      }
       return { templates: await store.remove(id) }
     })
 
