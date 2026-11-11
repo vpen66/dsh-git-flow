@@ -42,6 +42,7 @@ window.__ModuleLoader__.load({
       clearLastStep: 'git-flow/last-step/clear',
       conflict: 'git-flow/merge-conflict',
       restore: 'git-flow/templates/restore-default',
+      reorder: 'git-flow/templates/reorder',
       checkout: 'git-flow/checkout',
       switchBranch: 'git-flow/switch-branch',
       graph: 'git-flow/graph',
@@ -166,6 +167,13 @@ window.__ModuleLoader__.load({
   background:transparent; color:var(--dgf-text); font-size:12px; line-height:1.4; text-align:left;
   transition:background .16s}
 .dgf-tplhead:hover{background:rgba(34,211,238,.06)}
+/* 指令行右侧的上移/下移按钮 */
+.dgf-tplheadline{display:flex; align-items:center; gap:2px; padding-right:5px}
+.dgf-tplheadline .dgf-tplhead{width:auto; flex:1; min-width:0}
+.dgf-tplmove{width:20px; height:20px; font-size:10px; flex:none; opacity:.65}
+.dgf-tplrow:hover .dgf-tplmove{opacity:1}
+.dgf-iconbtn:disabled{opacity:.35; cursor:default; border-color:var(--dgf-line);
+  color:var(--dgf-dim); box-shadow:none}
 .dgf-tplcaret{flex:none; width:15px; height:15px; display:grid; place-items:center; border-radius:4px;
   font-size:9px; line-height:1; color:var(--dgf-cyan);
   background:rgba(34,211,238,.12); border:1px solid rgba(34,211,238,.28);
@@ -322,6 +330,8 @@ window.__ModuleLoader__.load({
   box-shadow:0 0 8px rgba(34,211,238,.25)}
 .dgf-iconbtn[data-variant=danger]:hover{color:#ffb3c0; border-color:rgba(251,113,133,.55);
   box-shadow:0 0 8px rgba(251,113,133,.25)}
+.dgf-iconbtn:disabled, .dgf-iconbtn:disabled:hover{opacity:.35; cursor:default;
+  border-color:var(--dgf-line); color:var(--dgf-dim); box-shadow:none}
 
 .dgf-confirm-mask{position:absolute; inset:0; z-index:60; display:flex; align-items:center;
   justify-content:center; padding:14px; background:rgba(3,7,12,.74);
@@ -3146,18 +3156,31 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
                     style: { marginTop: '8px' },
                     onClick: view.onRestoreDefault,
                   }, '恢复默认指令'))
-                : h('div', { className: 'dgf-tpllist' }, templates.map(item => h('div', {
+                : h('div', { className: 'dgf-tpllist' }, templates.map((item, index) => h('div', {
                   key: item.id,
                   className: 'dgf-tplrow',
                 },
-                h('button', {
-                  className: 'dgf-tplhead',
-                  onClick: () => view.onSelectTemplate(item.id),
-                },
-                h('span', { className: 'dgf-tplcaret' }, '▸'),
-                h('span', { className: 'dgf-tplname' }, item.name),
-                Array.isArray(item.compose) ? h('span', { className: 'dgf-chip' }, '组合') : null,
-                item.invalid === undefined ? null : h('span', { className: 'dgf-chip', 'data-tone': 'fail' }, '有问题')))))),
+                h('div', { className: 'dgf-tplheadline' },
+                  h('button', {
+                    className: 'dgf-tplhead',
+                    onClick: () => view.onSelectTemplate(item.id),
+                  },
+                  h('span', { className: 'dgf-tplcaret' }, '▸'),
+                  h('span', { className: 'dgf-tplname' }, item.name),
+                  Array.isArray(item.compose) ? h('span', { className: 'dgf-chip' }, '组合') : null,
+                  item.invalid === undefined ? null : h('span', { className: 'dgf-chip', 'data-tone': 'fail' }, '有问题')),
+                  h('button', {
+                    className: 'dgf-iconbtn dgf-tplmove',
+                    title: '上移',
+                    disabled: view.busy === true || index === 0,
+                    onClick: () => view.onMoveTemplate(item.id, -1),
+                  }, '↑'),
+                  h('button', {
+                    className: 'dgf-iconbtn dgf-tplmove',
+                    title: '下移',
+                    disabled: view.busy === true || index === templates.length - 1,
+                    onClick: () => view.onMoveTemplate(item.id, 1),
+                  }, '↓')))))),
             h(LogView, { log })))
       }
 
@@ -3190,12 +3213,14 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
               const active = item.id === draft.id
               // 展开中的行用实时草稿渲染，名称等改动立刻反映在行头上。
               const shown = active ? draft : item
+              const savedIndex = templates.findIndex(entry => entry.id === item.id)
               return h('div', {
                 key: item.id,
                 className: 'dgf-tplrow',
                 'data-on': active ? 'true' : 'false',
                 'data-collapsed': active && view.collapsed === true ? 'true' : 'false',
               },
+              h('div', { className: 'dgf-tplheadline' },
               h('button', {
                 className: 'dgf-tplhead',
                 onClick: () => {
@@ -3218,6 +3243,22 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
               active && view.collapsed === true
                 ? h('span', { className: 'dgf-chip' }, '已收起')
                 : null),
+              savedIndex < 0
+                ? null
+                : h('button', {
+                  className: 'dgf-iconbtn dgf-tplmove',
+                  title: '上移',
+                  disabled: view.busy === true || savedIndex === 0,
+                  onClick: () => view.onMoveTemplate(item.id, -1),
+                }, '↑'),
+              savedIndex < 0
+                ? null
+                : h('button', {
+                  className: 'dgf-iconbtn dgf-tplmove',
+                  title: '下移',
+                  disabled: view.busy === true || savedIndex === templates.length - 1,
+                  onClick: () => view.onMoveTemplate(item.id, 1),
+                }, '↓')),
               active && view.collapsed !== true
                 ? h('div', { className: 'dgf-tplbody' }, renderTemplateBody(view, draft))
                 : null)
@@ -3801,6 +3842,31 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
         }
       }
 
+      /** 上移/下移一条已保存指令，并把新顺序写回磁盘。 */
+      const moveTemplate = async (id, delta) => {
+        if (busy) return
+        const index = templates.findIndex(item => item.id === id)
+        const target = index + delta
+        if (index < 0 || target < 0 || target >= templates.length) return
+        const ids = templates.map(item => item.id)
+        const [moved] = ids.splice(index, 1)
+        ids.splice(target, 0, moved)
+        setBusy(true)
+        try {
+          const data = await post(ROUTE.reorder, { ids })
+          if (data.error) {
+            setLog([{ ok: false, text: data.error }])
+            return
+          }
+          setTemplates(data.templates ?? [])
+          setLog([{ ok: true, text: `已调整「${templates[index].name}」的顺序` }])
+        } catch (err) {
+          setLog([{ ok: false, text: explain(err) }])
+        } finally {
+          setBusy(false)
+        }
+      }
+
       /** 进入编辑页签，用当前指令填充草稿。 */
       const startEdit = () => {
         setDraft(template ? JSON.parse(JSON.stringify(template)) : blankTemplate())
@@ -3944,6 +4010,7 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
         onToggleRow: () => setCollapsed(prev => !prev),
         draftInvalid: draft && draft.invalid ? draft.invalid : null,
         onRestoreDefault: () => void restoreDefault(),
+        onMoveTemplate: (id, delta) => void moveTemplate(id, delta),
         onReloadTemplates: () => void refreshTemplates(),
         onSelectTemplate: id => {
           const found = templates.find(item => item.id === id)

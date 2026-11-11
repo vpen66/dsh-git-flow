@@ -145,6 +145,7 @@ DeepSeek Harness 插件：**自定义 Git 工作流指令**。把「从哪个分
 - 收起时行头会标「未保存」，提醒你有改动还没保存
 - 行头标出「新的」（还没保存）/「未保存」（改过没存）/「有问题」（校验失败）
 - 新建 / 复制 / 删除指令 / 恢复默认
+- 每行右侧的 ↑ / ↓ 可以调整指令顺序，常用的放前面；顺序会写回磁盘，右键分支菜单也按这个顺序
 - 步骤类型新增「执行指令」：选一条已有指令，执行到这里时展开它的变量和步骤，可和普通步骤混排、也可嵌套引用；
   循环/缺失引用会阻止保存；被引用的指令不能直接删除。旧版「组合指令」升级后会自动转成
   普通指令 +「执行指令」步骤，不用重新配置
@@ -243,7 +244,7 @@ dsh plugin --profile desktop remove dsh-git-flow
 | `src/tools.ts` | AI 工具：`git_flow_add_template` / `git_flow_list_templates` |
 | `src/command.ts` | `/add-template` 命令：把需求交给当前会话的 AI |
 | `src/runs.ts` | 最近一次步骤结果的持久化（失败横幅用） |
-| `src/index.ts` | 服务端：会话工作目录解析 + 十六条 web 路由 + AI 工具/命令注册 |
+| `src/index.ts` | 服务端：会话工作目录解析 + 十七条 web 路由 + AI 工具/命令注册 |
 | `client/client.js` | 浏览器半侧：手写 lazy-CJS bundle，两个页签的界面 |
 | `cordis.patch.yml` | 组合补丁 |
 
