@@ -81,6 +81,8 @@ export interface WorkflowTemplate {
   id: string
   name: string
   description?: string
+  /** 可选分组名，仅用于指令列表/右键菜单归类；空串或省略表示未分组。 */
+  group?: string
   /**
    * 本地分支与远端分叉时怎么办：
    * - `merge`（默认）：`git merge origin/x`，留一个合并提交；
@@ -355,6 +357,7 @@ export function validateTemplate(value: unknown): string | null {
   const template = value as Partial<WorkflowTemplate>
   if (typeof template.id !== 'string' || template.id === '') return '指令缺少 id'
   if (typeof template.name !== 'string' || template.name === '') return '指令缺少名称'
+  if (template.group !== undefined && typeof template.group !== 'string') return 'group 必须是字符串'
   if (!Array.isArray(template.steps)) return 'steps 必须是数组'
   if (!Array.isArray(template.variables)) return 'variables 必须是数组'
   const compose = Array.isArray(template.compose) ? template.compose : null
