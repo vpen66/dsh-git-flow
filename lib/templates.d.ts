@@ -42,8 +42,8 @@ export interface TemplateVariable {
     /** 自动填充规则；来源有值时覆盖默认值。 */
     derive?: VariableDerive;
 }
-/** 步骤种类：建分支、合并分支、只把某个分支推到远端、在分支上打标签，或拉取/提交。 */
-export type StepKind = 'create' | 'merge' | 'push' | 'tag' | 'pull' | 'commit';
+/** 步骤种类：建分支、合并、推送、打标签、拉取、提交，或执行另一条已保存的指令。 */
+export type StepKind = 'create' | 'merge' | 'push' | 'tag' | 'pull' | 'commit' | 'call';
 /** 一个执行步骤。 */
 export interface WorkflowStep {
     /** 稳定标识，前端用来记录每一步的状态。 */
@@ -51,13 +51,13 @@ export interface WorkflowStep {
     kind: StepKind;
     /**
      * 建分支时的起点、合并/打标签时的来源分支。允许 `{变量}`；
-     * `push` / `pull` / `commit` 步骤不用它，固定为空串。
+     * `push` / `pull` / `commit` / `call` 步骤不用它，固定为空串。
      */
     source: string;
     /**
      * 建分支/合并的目标分支；`tag` 步骤里表示标签名；`push` 步骤里表示要推送的分支；
      * `pull` 步骤里表示要更新到远端最新的本地分支；`commit` 步骤里表示提交说明，
-     * 允许 `{变量}`。
+     * 允许 `{变量}`；`call` 步骤里表示被引用指令的 id。
      */
     target: string;
     /** 该步之后是否推送目标分支（`tag` 步骤是推送标签）。 */
@@ -80,8 +80,7 @@ export interface WorkflowTemplate {
     variables: TemplateVariable[];
     steps: WorkflowStep[];
     /**
-     * 组合指令：按顺序引用其它指令的 id，执行时把被引用指令的步骤展开、变量合并。
-     * 存在 compose 字段（哪怕是空数组）就表示这是组合指令，steps 必须为空。
+     * 旧版组合字段：v5 会把 compose 迁移成 kind=call 的步骤；新指令不再使用它。
      */
     compose?: string[];
     /**
@@ -117,7 +116,7 @@ export declare function backupTemplates(): Promise<void>;
  */
 export declare function defaultReleaseTemplate(): WorkflowTemplate;
 /** 当前指令文件版本；2 起支持变量推导，3 起支持打标签步骤。 */
-export declare const TEMPLATE_FILE_VERSION = 4;
+export declare const TEMPLATE_FILE_VERSION = 5;
 /**
  * 计算一个变量的自动填充值。
  *
@@ -158,7 +157,7 @@ export declare function migrateTemplates(templates: WorkflowTemplate[], version:
  */
 export declare function validateTemplate(value: unknown): string | null;
 /**
- * 校验组合指令引用的指令是否存在、是否成环（保存时用）。
+ * 校验指令引用（kind=call 步骤，以及旧版 compose）是否存在、是否成环（保存时用）。
  *
  * @param template 待保存的指令。
  * @param all 保存后会落盘的全部指令（包含这条）。

@@ -67,14 +67,17 @@ export function precheckStep(step: WorkflowStep, values: Record<string, string>)
       ? '提交说明'
       : resolved.kind === 'pull'
         ? '要更新的分支'
-        : '目标分支'
+        : resolved.kind === 'call'
+          ? '要执行的指令'
+          : '目标分支'
   if (resolved.target.trim() === '') return `${targetName}为空`
   if (/\{[A-Za-z0-9_]+\}/.test(resolved.target)) return `${targetName}还有未填的变量：${resolved.target}`
   if (resolved.kind === 'tag' && /[\s~^:?*\[\\]/.test(resolved.target)) {
     return `标签名不能包含空白或 ~ ^ : ? * [ \\ 等字符：${resolved.target}`
   }
-  // push / pull / commit 只涉及一个字段，没有来源。
-  if (resolved.kind === 'push' || resolved.kind === 'pull' || resolved.kind === 'commit') return null
+  // push / pull / commit / call 只涉及一个字段，没有来源。
+  if (resolved.kind === 'push' || resolved.kind === 'pull'
+    || resolved.kind === 'commit' || resolved.kind === 'call') return null
   if (resolved.source.trim() === '') return '来源分支为空'
   if (/\{[A-Za-z0-9_]+\}/.test(resolved.source)) return `来源分支还有未填的变量：${resolved.source}`
   // 标签名与分支可以重名，只有建分支/合并才需要来源与目标不同。
@@ -128,6 +131,11 @@ export async function runStep(
     output: result.output,
     ...(result.conflicts === undefined ? {} : { conflicts: result.conflicts }),
   })
+
+  if (resolved.kind === 'call') {
+    // 前端会在执行前把「执行指令」步骤展开成被引用指令的步骤；走到这里说明没展开。
+    return { ...base, message: '「执行指令」步骤需要先展开，不能直接执行' }
+  }
 
   if (resolved.kind === 'push') {
     // 推送前先同步远端：本地落后就快进，避免 push 被拒；分叉则停下来提示手动处理。

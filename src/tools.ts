@@ -12,7 +12,7 @@
 
 import { randomUUID } from 'node:crypto'
 import {
-  TemplateStore, validateTemplate,
+  TemplateStore, validateComposeRefs, validateTemplate,
   type TemplateVariable, type VariableDerive, type WorkflowStep, type WorkflowTemplate,
 } from './templates.js'
 
@@ -128,8 +128,8 @@ function normalizeVariable(raw: VariableArgs): TemplateVariable {
 function normalizeStep(raw: StepArgs, index: number): WorkflowStep {
   const kind = raw.kind
   if (kind !== 'create' && kind !== 'merge' && kind !== 'push' && kind !== 'tag'
-    && kind !== 'pull' && kind !== 'commit') {
-    throw new Error(`第 ${index + 1} 步的 kind 只能是 create / merge / push / tag / pull / commit`)
+    && kind !== 'pull' && kind !== 'commit' && kind !== 'call') {
+    throw new Error(`第 ${index + 1} 步的 kind 只能是 create / merge / push / tag / pull / commit / call`)
   }
   const target = optionalString(raw.target)?.trim() ?? ''
   if (target === '') throw new Error(`第 ${index + 1} 步缺少 target`)
@@ -138,7 +138,7 @@ function normalizeStep(raw: StepArgs, index: number): WorkflowStep {
     ? optionalString(raw.source)?.trim() ?? ''
     : ''
   const id = optionalString(raw.id)?.trim() || `s${index + 1}`
-  const step: WorkflowStep = { id, kind, source, target, push: raw.push === true }
+  const step: WorkflowStep = { id, kind, source, target, push: kind === 'call' ? false : raw.push === true }
   const note = optionalString(raw.note)
   if (note !== undefined && note !== '') step.note = note
   return step
@@ -225,9 +225,9 @@ const ADD_TEMPLATE_PARAMETERS: Record<string, unknown> = {
         type: 'object',
         properties: {
           id: { type: 'string', description: '稳定标识，省略时按序号生成' },
-          kind: { type: 'string', enum: ['create', 'merge', 'push', 'tag', 'pull', 'commit'], description: '建分支 / 合并 / 推送 / 打标签 / 拉取 / 提交' },
+          kind: { type: 'string', enum: ['create', 'merge', 'push', 'tag', 'pull', 'commit', 'call'], description: '建分支 / 合并 / 推送 / 打标签 / 拉取 / 提交 / 执行另一条指令' },
           source: { type: 'string', description: 'create 的起点、merge 的来源，或 tag 要打标签的分支；push / pull / commit 不用它，留空；分支名可用 {变量}' },
-          target: { type: 'string', description: 'create/merge 的目标分支、tag 的标签名、push 要推送的分支、pull 要更新到远端最新的本地分支，或 commit 的提交说明（可用 {变量}）' },
+          target: { type: 'string', description: 'create/merge 的目标分支、tag 的标签名、push 要推送的分支、pull 要更新到远端最新的本地分支、commit 的提交说明（可用 {变量}），或 call 要执行的指令 id' },
           push: { type: 'boolean', description: '该步完成后是否推送目标分支；tag 步骤则是推送标签' },
           note: { type: 'string', description: '步骤备注' },
         },
@@ -256,7 +256,8 @@ export function registerTemplateTools(tools: unknown, store: TemplateStore): () 
     description: '新增或更新一个 Git 工作流指令（存到 ~/.dsh/git-flow/templates.json）。'
       + '指令由变量和有序步骤组成，步骤 kind 只能是 create / merge / push / tag / pull / commit，分支名可用 {变量} 占位。'
       + 'tag 步骤在 source 分支的最新提交上打轻量标签，target 是标签名，push 为 true 时同时推送标签。'
-      + 'pull 步骤把本地分支更新到远端最新；commit 步骤提交工作区全部改动，target 是提交说明。'
+      + 'pull 步骤把本地分支更新到远端最新；commit 步骤提交工作区全部改动，target 是提交说明；'
+      + 'call 步骤按顺序执行另一条已保存指令，target 是指令 id。'
       + '保存前会自动校验；id 已存在时默认拒绝覆盖。',
     parameters: ADD_TEMPLATE_PARAMETERS,
     output: {
@@ -272,12 +273,13 @@ export function registerTemplateTools(tools: unknown, store: TemplateStore): () 
       if (invalid !== null) throw new Error(`指令校验失败：${invalid}`)
 
       const overwrite = (args as AddTemplateArgs).overwrite === true
-      if (!overwrite) {
-        const existing = await store.load()
-        if (existing.some(item => item.id === template.id)) {
-          throw new Error(`指令 id「${template.id}」已存在；换一个 id，或显式传 overwrite: true 覆盖`)
-        }
+      const existing = await store.load()
+      if (!overwrite && existing.some(item => item.id === template.id)) {
+        throw new Error(`指令 id「${template.id}」已存在；换一个 id，或显式传 overwrite: true 覆盖`)
       }
+      const merged = [...existing.filter(item => item.id !== template.id), template]
+      const refInvalid = validateComposeRefs(template, merged)
+      if (refInvalid !== null) throw new Error(`指令校验失败：${refInvalid}`)
       await store.upsert(template)
       return `已保存指令「${template.name}」（id: ${template.id}，${template.variables.length} 个变量，${template.steps.length} 个步骤）。`
         + '如果右栏「Git 工作流」面板开着，提醒用户点指令区的刷新按钮或重新打开面板。'
@@ -286,7 +288,7 @@ export function registerTemplateTools(tools: unknown, store: TemplateStore): () 
 
   disposers.push(service.register({
     name: 'git_flow_list_templates',
-    description: '列出当前已保存的全部 Git 工作流指令（id、名称、变量、步骤；组合指令显示它引用的指令链），步骤 kind 支持 create / merge / push / tag / pull / commit（pull 把本地分支更新到远端最新；commit 提交工作区全部改动，target 是提交说明），用于新增或修改前先了解现有指令。',
+    description: '列出当前已保存的全部 Git 工作流指令（id、名称、变量、步骤），步骤 kind 支持 create / merge / push / tag / pull / commit / call（call 执行另一条指令，target 是指令 id），用于新增或修改前先了解现有指令。',
     parameters: { type: 'object', properties: {}, additionalProperties: false },
     output: {
       schema: { type: 'string' },
@@ -300,7 +302,9 @@ export function registerTemplateTools(tools: unknown, store: TemplateStore): () 
           ? '无变量'
           : template.variables.map(variable => `{${variable.key}}(${variable.label}${variable.kind === 'pick' ? '，选分支' : '，手填'})`).join('、')
         const steps = template.steps.map((step, index) => {
-          const action = step.kind === 'push'
+          const action = step.kind === 'call'
+            ? `执行指令 ${step.target}`
+            : step.kind === 'push'
             ? `推送 ${step.target}`
             : step.kind === 'pull'
               ? `拉取 ${step.target}`
