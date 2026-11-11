@@ -167,12 +167,19 @@ window.__ModuleLoader__.load({
   background:transparent; color:var(--dgf-text); font-size:12px; line-height:1.4; text-align:left;
   transition:background .16s}
 .dgf-tplhead:hover{background:rgba(34,211,238,.06)}
-/* 指令分组标题 */
-.dgf-tplgroup{display:flex; align-items:center; gap:6px; padding:7px 4px 3px;
+/* 指令分组标题：点标题展开/收起，右侧箭头排序 */
+.dgf-tplgroup{display:flex; align-items:center; gap:3px; padding:7px 4px 3px;
   font-size:10px; letter-spacing:.08em; color:var(--dgf-dim); text-transform:none}
+.dgf-tplgroup-toggle{display:flex; align-items:center; gap:6px; flex:1; min-width:0;
+  appearance:none; background:transparent; border:0; padding:0; cursor:pointer;
+  color:inherit; font:inherit; font-size:10px; letter-spacing:.08em; text-align:left}
+.dgf-tplgroup-toggle:hover{color:var(--dgf-text)}
 .dgf-tplgroup .dgf-folder-icon{color:var(--dgf-amber); opacity:.9}
-.dgf-tplgroup-name{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-.dgf-tplgroup-count{flex:none; opacity:.7; font-family:var(--dsh-font-family-code-default,monospace)}
+.dgf-tplgroup-name{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.dgf-tplgroup-count{margin-left:auto; flex:none; opacity:.7;
+  font-family:var(--dsh-font-family-code-default,monospace)}
+.dgf-tplgroup .dgf-iconbtn{width:20px; height:20px; font-size:10px; opacity:.65; flex:none}
+.dgf-tplgroup:hover .dgf-iconbtn{opacity:1}
 /* 指令行右侧的上移/下移按钮 */
 .dgf-tplheadline{display:flex; align-items:center; gap:2px; padding-right:5px}
 .dgf-tplheadline .dgf-tplhead{width:auto; flex:1; min-width:0}
@@ -950,6 +957,28 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
       items.splice(target, 0, moved)
       const next = groups.map((item, position) => position === groupIndex ? { ...item, templates: items } : item)
       return next.flatMap(item => item.templates)
+    }
+
+    /**
+     * 调整命名分组的顺序；未分组始终排在最后。
+     *
+     * @param templates 全部指令。
+     * @param name 分组名。
+     * @param delta -1 上移，1 下移。
+     * @returns 新数组；不能移动时返回 null。
+     */
+    function moveGroupOrder(templates, name, delta) {
+      if (name === '') return null
+      const groups = groupTemplates(templates)
+      const named = groups.filter(group => group.name !== '')
+      const index = named.findIndex(group => group.name === name)
+      const target = index + delta
+      if (index === -1 || target < 0 || target >= named.length) return null
+      const reordered = [...named]
+      const [moved] = reordered.splice(index, 1)
+      reordered.splice(target, 0, moved)
+      const loose = groups.find(group => group.name === '')?.templates ?? []
+      return [...reordered.flatMap(group => group.templates), ...loose]
     }
 
     /**
@@ -3243,24 +3272,57 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
     function renderEdit(view) {
       const { draft, templates, log } = view
 
-      /** 分组标题（未分组固定放最后）。 */
-      const groupHeader = group => h('div', {
+      const expandedGroups = view.expandedGroups ?? new Set()
+
+      /** 分组标题：点标题展开/收起，右侧 ↑/↓ 调整分组顺序。 */
+      const groupHeader = (group, index, total, open) => h('div', {
         key: `g:${group.name}`,
         className: 'dgf-tplgroup',
-        'data-group': group.name === '' ? 'ungrouped' : group.name,
+        'data-group': group.name,
       },
-      h(FolderIcon, { open: true }),
-      h('span', { className: 'dgf-tplgroup-name' }, group.name === '' ? '未分组' : group.name),
-      h('span', { className: 'dgf-tplgroup-count' }, String(group.templates.length)))
+      h('button', {
+        className: 'dgf-tplgroup-toggle',
+        type: 'button',
+        title: open ? '收起分组' : '展开分组',
+        onClick: () => view.onToggleGroup(group.name),
+      },
+      h(FolderIcon, { open }),
+      h('span', { className: 'dgf-tplgroup-name' }, group.name),
+      h('span', { className: 'dgf-tplgroup-count' }, String(group.templates.length))),
+      h('button', {
+        className: 'dgf-iconbtn dgf-groupmove',
+        type: 'button',
+        title: '分组上移',
+        disabled: view.busy === true || index === 0,
+        onClick: () => view.onMoveGroup(group.name, -1),
+      }, '↑'),
+      h('button', {
+        className: 'dgf-iconbtn dgf-groupmove',
+        type: 'button',
+        title: '分组下移',
+        disabled: view.busy === true || index === total - 1,
+        onClick: () => view.onMoveGroup(group.name, 1),
+      }, '↓'))
 
-      /** 按分组展开成可渲染节点；没有命名分组时不显示分组标题，保持原平铺观感。 */
+      /**
+       * 按分组展开成可渲染节点：命名分组默认折叠，只显示组标题；
+       * 未分组指令始终显示在最后。
+       */
       const groupedNodes = (items, renderRow) => {
         const groups = groupTemplates(items)
-        const hasNamed = groups.some(group => group.name !== '')
-        return groups.flatMap(group => {
-          const children = group.templates.map(renderRow)
-          return hasNamed ? [groupHeader(group), ...children] : children
-        })
+        const named = groups.filter(group => group.name !== '')
+        const loose = groups.find(group => group.name === '')?.templates ?? []
+        if (named.length === 0) return items.map(renderRow)
+        return [
+          ...named.flatMap((group, index) => {
+            const open = expandedGroups.has(group.name) === true
+            return [
+              groupHeader(group, index, named.length, open),
+              ...(open ? group.templates.map(renderRow) : []),
+            ]
+          }),
+          ...loose.map(renderRow),
+        ]
       }
 
       if (!draft) {
@@ -3437,6 +3499,8 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
       const [confirmDelete, setConfirmDelete] = React.useState(false)
       // 指令行是否收起。收起只是不显示表单，草稿仍留在内存里，再点开还能接着改。
       const [collapsed, setCollapsed] = React.useState(false)
+      // 展开的指令分组；默认全部折叠，只显示组标题。
+      const [expandedGroups, setExpandedGroups] = React.useState(() => new Set())
       // 流程跑完后把用户送回来时所在的分支，避免停在最后一次合并的目标分支上。
       const [restoreBranch, setRestoreBranch] = React.useState(true)
       // 右键菜单：{ branch, x, y }；执行弹窗：{ templateId, branch, startIndex, phase }。
@@ -3982,6 +4046,47 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
         }
       }
 
+      /** 展开一个命名分组。 */
+      const expandGroup = name => {
+        if (typeof name !== 'string' || name.trim() === '') return
+        setExpandedGroups(prev => {
+          if (prev.has(name)) return prev
+          const next = new Set(prev)
+          next.add(name)
+          return next
+        })
+      }
+
+      /** 展开/收起分组。 */
+      const toggleGroup = name => setExpandedGroups(prev => {
+        const next = new Set(prev)
+        if (next.has(name)) next.delete(name)
+        else next.add(name)
+        return next
+      })
+
+      /** 调整分组顺序：按新顺序重写指令数组并落盘。 */
+      const moveGroup = async (name, delta) => {
+        if (busy) return
+        const nextTemplates = moveGroupOrder(templates, name, delta)
+        if (nextTemplates === null) return
+        const ids = nextTemplates.map(item => item.id)
+        setBusy(true)
+        try {
+          const data = await post(ROUTE.reorder, { ids })
+          if (data.error) {
+            setLog([{ ok: false, text: data.error }])
+            return
+          }
+          setTemplates(data.templates ?? [])
+          setLog([{ ok: true, text: `已调整分组「${name}」的顺序` }])
+        } catch (err) {
+          setLog([{ ok: false, text: explain(err) }])
+        } finally {
+          setBusy(false)
+        }
+      }
+
       /** 上移/下移一条已保存指令，并把新顺序写回磁盘。 */
       const moveTemplate = async (id, delta) => {
         if (busy) return
@@ -4147,6 +4252,9 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
         collapsed,
         onToggleRow: () => setCollapsed(prev => !prev),
         draftInvalid: draft && draft.invalid ? draft.invalid : null,
+        expandedGroups,
+        onToggleGroup: name => toggleGroup(name),
+        onMoveGroup: (name, delta) => void moveGroup(name, delta),
         onRestoreDefault: () => void restoreDefault(),
         onMoveTemplate: (id, delta) => void moveTemplate(id, delta),
         onReloadTemplates: () => void refreshTemplates(),
@@ -4157,6 +4265,7 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
           setConfirmDelete(false)
           setCollapsed(false)
           setDraft(found ? JSON.parse(JSON.stringify(found)) : null)
+          if (found) expandGroup(templateGroup(found))
         },
         onNewTemplate: () => {
           setDraft(blankTemplate())
@@ -4191,7 +4300,11 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
           setDraft(copy)
         },
         onDeleteTemplate: requestDelete,
-        onEdit: patch => { setConfirmDelete(false); setDraft(prev => ({ ...prev, ...patch })) },
+        onEdit: patch => {
+          setConfirmDelete(false)
+          if (typeof patch.group === 'string') expandGroup(patch.group.trim())
+          setDraft(prev => ({ ...prev, ...patch }))
+        },
         onEditVariable: (index, patch) => setDraft(prev => {
           const next = JSON.parse(JSON.stringify(prev))
           next.variables[index] = { ...next.variables[index], ...patch }
@@ -4250,7 +4363,7 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
         branchRows, branchTree, collectDirPaths, FolderIcon, BranchList, BranchMenu, ExecutionModal, stepSummary,
         CommitGraph, layoutCommitGraph, graphRefInfo, commitTime,
         blankComposeTemplate, isComposedTemplate, expandComposedTemplate, expandInstruction,
-        templateGroup, groupTemplates, groupPeers, moveWithinGroup,
+        templateGroup, groupTemplates, groupPeers, moveWithinGroup, moveGroupOrder,
         stepKindLabel, stepPushable, stepFlow,
         pickVariableFor, prefillValues,
         parseDiff, toSplitRows, changeLabel,
