@@ -788,7 +788,7 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
      * @param templates 全部指令。
      * @returns `{ template, error }`；出错时 template 为 null。
      */
-    function expandComposedTemplate(template, templates) {
+    function expandInstruction(template, templates) {
       const byId = new Map((templates ?? []).map(item => [item.id, item]))
       const variables = []
       const variableKeys = new Set()
@@ -802,21 +802,29 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
       }
       const walk = current => {
         if (path.includes(current.id)) {
-          return `组合存在循环引用：${[...path, current.id].join(' → ')}`
+          return `指令引用存在循环：${[...path, current.id].join(' → ')}`
         }
         path.push(current.id)
         try {
           for (const variable of current.variables ?? []) addVariable(variable)
+          // 旧版组合指令（v5 迁移前）仍按 compose 展开，保证旧数据还能执行。
           if (isComposedTemplate(current)) {
             for (const id of current.compose ?? []) {
               const child = byId.get(id)
-              if (child === undefined) return `组合引用的指令不存在：${id}`
+              if (child === undefined) return `引用的指令不存在：${id}`
               const error = walk(child)
               if (error !== null) return error
             }
             return null
           }
           for (const step of current.steps ?? []) {
+            if (step.kind === 'call') {
+              const child = byId.get(step.target)
+              if (child === undefined) return `引用的指令不存在：${step.target}`
+              const error = walk(child)
+              if (error !== null) return error
+              continue
+            }
             let stepId = `${current.id}:${step.id}`
             let suffix = 2
             while (usedIds.has(stepId)) {
@@ -835,6 +843,18 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
       if (error !== null) return { template: null, error }
       return { template: { ...template, variables, steps }, error: null }
     }
+
+    /**
+     * 兼容旧调用：组合指令与带「执行指令」步骤的普通指令都走同一套展开逻辑。
+     *
+     * @param template 指令。
+     * @param templates 全部指令。
+     * @returns `{ template, error }`。
+     */
+    function expandComposedTemplate(template, templates) {
+      return expandInstruction(template, templates)
+    }
+
 
     /**
      * 按指令声明初始化变量取值。
@@ -1721,7 +1741,9 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
               ? '拉取'
               : kind === 'commit'
                 ? '提交'
-                : '合并'
+                : kind === 'call'
+                  ? '执行指令'
+                  : '合并'
     }
 
     /**
@@ -2147,7 +2169,9 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
     function stepSummary(step, values) {
       const source = preview(step.source, values)
       const target = preview(step.target, values)
-      return step.kind === 'push'
+      return step.kind === 'call'
+        ? `执行指令 ${target}`
+        : step.kind === 'push'
         ? `推送 ${target}`
         : step.kind === 'create'
           ? `从 ${source} 创建 ${target}`
@@ -2837,14 +2861,20 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
               h('select', {
                 className: 'dgf-select',
                 value: step.kind,
-                onChange: event => view.onEditStep(index, { kind: event.target.value }),
+                onChange: event => {
+                  const kind = event.target.value
+                  view.onEditStep(index, kind === 'call'
+                    ? { kind, target: '', source: '', push: false }
+                    : { kind, ...(step.kind === 'call' ? { target: '', source: '' } : {}) })
+                },
               },
               h('option', { value: 'create' }, '建分支'),
               h('option', { value: 'merge' }, '合并'),
               h('option', { value: 'tag' }, '打标签'),
               h('option', { value: 'push' }, '推送'),
               h('option', { value: 'pull' }, '拉取'),
-              h('option', { value: 'commit' }, '提交')),
+              h('option', { value: 'commit' }, '提交'),
+              h('option', { value: 'call' }, '执行指令')),
               // 推送/拉取/提交本身没有可推送的对象，只有建分支/合并/打标签能顺手推。
               stepPushable(step.kind)
                 ? h('label', {
@@ -2872,7 +2902,24 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
                 title: '删除步骤',
                 onClick: () => view.onRemoveStep(index),
               }, '×')),
-            step.kind === 'push'
+            step.kind === 'call'
+              ? h('div', null,
+                h('div', { className: 'dgf-field', style: { marginTop: '5px' } },
+                  h('span', { className: 'dgf-field-label' }, '指令'),
+                  h('select', {
+                    className: cx('dgf-select', 'dgf-grow'),
+                    value: step.target ?? '',
+                    onChange: event => view.onEditStep(index, { target: event.target.value }),
+                  },
+                  h('option', { value: '' }, '选择要执行的指令…'),
+                  (view.templates ?? [])
+                    .filter(item => item.id !== draft.id)
+                    .map(item => h('option', { key: item.id, value: item.id }, item.name)),
+                  (view.templates ?? []).some(item => item.id === step.target)
+                    ? null
+                    : h('option', { value: step.target }, `缺失的指令（${step.target}）`))),
+                h('div', { className: 'dgf-caption' }, '执行时会展开它的变量和步骤，和当前指令的其它步骤按顺序执行'))
+              : step.kind === 'push'
               ? h('div', { className: 'dgf-field', style: { marginTop: '5px' } },
                 h('span', { className: 'dgf-field-label' }, '分支'),
                 h(BranchPicker, {
@@ -2998,6 +3045,14 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
           h('div', { className: 'dgf-sec-head' },
             h('span', { className: 'dgf-sec-title' }, '预览')),
           (draft.steps ?? []).map((step, index) => {
+            if (step.kind === 'call') {
+              const called = (view.templates ?? []).find(item => item.id === step.target)
+              return h('div', { key: index, className: 'dgf-flow' },
+                h('span', { className: 'dgf-flow-src' }, '执行指令'),
+                h('span', { className: 'dgf-flow-arrow' }, '▸'),
+                h('span', { className: 'dgf-flow-dst' },
+                  called === undefined ? `缺失的指令（${step.target}）` : called.name))
+            }
             const source = preview(step.source, guess)
             const target = preview(step.target, guess)
             return h('div', { key: index, className: 'dgf-flow' },
@@ -3062,8 +3117,7 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
                   h('button', {
                     className: 'dgf-btn', 'data-variant': 'primary', onClick: view.onNewTemplate,
                   }, '新建'),
-                  h('button', { className: 'dgf-btn', onClick: view.onNewCompose }, '组合'),
-                  h('button', { className: 'dgf-btn', onClick: view.onRestoreDefault }, '恢复默认'))),
+                                    h('button', { className: 'dgf-btn', onClick: view.onRestoreDefault }, '恢复默认'))),
               templates.length === 0
                 ? h('div', { className: 'dgf-empty' },
                   h('div', null, '还没有指令'),
@@ -3110,8 +3164,7 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
                 h('button', {
                   className: 'dgf-btn', 'data-variant': 'primary', onClick: view.onNewTemplate,
                 }, '新建'),
-                h('button', { className: 'dgf-btn', onClick: view.onNewCompose }, '组合'),
-                h('button', { className: 'dgf-btn', onClick: view.onRestoreDefault }, '恢复默认'))),
+                                h('button', { className: 'dgf-btn', onClick: view.onRestoreDefault }, '恢复默认'))),
 
             // 列表：一行一个指令，点开的那个在下方展开配置。
             h('div', { className: 'dgf-tpllist' }, rows.map(item => {
@@ -3533,7 +3586,7 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
        * @param startIndex 从第几步开始执行（失败重试用）。
        */
       const openExecution = (active, branch, startIndex = 0) => {
-        const expanded = expandComposedTemplate(active, templates)
+        const expanded = expandInstruction(active, templates)
         setMenu(null)
         if (expanded.error !== null) {
           setLog([{ ok: false, text: expanded.error }])
@@ -3972,7 +4025,7 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
         GitFlowPanel, BranchPicker, StepNode, LastFailureBanner,
         branchRows, branchTree, collectDirPaths, FolderIcon, BranchList, BranchMenu, ExecutionModal, stepSummary,
         CommitGraph, layoutCommitGraph, graphRefInfo, commitTime,
-        blankComposeTemplate, isComposedTemplate, expandComposedTemplate,
+        blankComposeTemplate, isComposedTemplate, expandComposedTemplate, expandInstruction,
         stepKindLabel, stepPushable, stepFlow,
         pickVariableFor, prefillValues,
         parseDiff, toSplitRows, changeLabel,

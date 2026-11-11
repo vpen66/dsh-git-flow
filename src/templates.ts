@@ -51,8 +51,8 @@ export interface TemplateVariable {
   derive?: VariableDerive
 }
 
-/** 步骤种类：建分支、合并分支、只把某个分支推到远端、在分支上打标签，或拉取/提交。 */
-export type StepKind = 'create' | 'merge' | 'push' | 'tag' | 'pull' | 'commit'
+/** 步骤种类：建分支、合并、推送、打标签、拉取、提交，或执行另一条已保存的指令。 */
+export type StepKind = 'create' | 'merge' | 'push' | 'tag' | 'pull' | 'commit' | 'call'
 
 /** 一个执行步骤。 */
 export interface WorkflowStep {
@@ -61,13 +61,13 @@ export interface WorkflowStep {
   kind: StepKind
   /**
    * 建分支时的起点、合并/打标签时的来源分支。允许 `{变量}`；
-   * `push` / `pull` / `commit` 步骤不用它，固定为空串。
+   * `push` / `pull` / `commit` / `call` 步骤不用它，固定为空串。
    */
   source: string
   /**
    * 建分支/合并的目标分支；`tag` 步骤里表示标签名；`push` 步骤里表示要推送的分支；
    * `pull` 步骤里表示要更新到远端最新的本地分支；`commit` 步骤里表示提交说明，
-   * 允许 `{变量}`。
+   * 允许 `{变量}`；`call` 步骤里表示被引用指令的 id。
    */
   target: string
   /** 该步之后是否推送目标分支（`tag` 步骤是推送标签）。 */
@@ -91,8 +91,7 @@ export interface WorkflowTemplate {
   variables: TemplateVariable[]
   steps: WorkflowStep[]
   /**
-   * 组合指令：按顺序引用其它指令的 id，执行时把被引用指令的步骤展开、变量合并。
-   * 存在 compose 字段（哪怕是空数组）就表示这是组合指令，steps 必须为空。
+   * 旧版组合字段：v5 会把 compose 迁移成 kind=call 的步骤；新指令不再使用它。
    */
   compose?: string[]
   /**
@@ -194,7 +193,7 @@ export function defaultReleaseTemplate(): WorkflowTemplate {
 }
 
 /** 当前指令文件版本；2 起支持变量推导，3 起支持打标签步骤。 */
-export const TEMPLATE_FILE_VERSION = 4
+export const TEMPLATE_FILE_VERSION = 5
 
 /**
  * 计算一个变量的自动填充值。
@@ -268,22 +267,36 @@ export function applyDerived(
 export function migrateTemplates(templates: WorkflowTemplate[], version: number): WorkflowTemplate[] {
   if (version >= TEMPLATE_FILE_VERSION) return templates
   return templates.map(template => {
-    if (template.id !== 'release-default') return template
     let next = template
-    if (version < 2) {
-      const variables = (next.variables ?? []).map(variable => {
-        if (variable.key !== 'release' || variable.derive !== undefined) return variable
-        return {
-          ...variable,
-          derive: { from: 'feature', take: 'after-slash' as const, prefix: 'release/' },
-        }
-      })
-      next = { ...next, variables }
+    if (next.id === 'release-default') {
+      if (version < 2) {
+        const variables = (next.variables ?? []).map(variable => {
+          if (variable.key !== 'release' || variable.derive !== undefined) return variable
+          return {
+            ...variable,
+            derive: { from: 'feature', take: 'after-slash' as const, prefix: 'release/' },
+          }
+        })
+        next = { ...next, variables }
+      }
+      if (version < 3) next = addReleaseTag(next)
+      // v4：内置指令从「默认」改叫「示例」；用户改过名字的不动。
+      if (version < 4 && next.name === '发布流程（默认）') {
+        next = { ...next, name: '发布流程（示例）' }
+      }
     }
-    if (version < 3) next = addReleaseTag(next)
-    // v4：内置指令从「默认」改叫「示例」；用户改过名字的不动。
-    if (version < 4 && next.name === '发布流程（默认）') {
-      next = { ...next, name: '发布流程（示例）' }
+    // v5：旧版「组合指令」转成普通指令 + 引用步骤；新指令直接用 kind=call 的步骤。
+    if (version < 5 && Array.isArray(next.compose)) {
+      const migrated = { ...next }
+      delete migrated.compose
+      migrated.steps = next.compose.map((id, index) => ({
+        id: `call-${index + 1}`,
+        kind: 'call' as const,
+        source: '',
+        target: id,
+        push: false,
+      }))
+      next = migrated
     }
     return next
   })
@@ -423,8 +436,18 @@ export function validateTemplate(value: unknown): string | null {
     stepIds.add(step.id)
     const kind = step.kind
     if (kind !== 'create' && kind !== 'merge' && kind !== 'push' && kind !== 'tag'
-      && kind !== 'pull' && kind !== 'commit') {
+      && kind !== 'pull' && kind !== 'commit' && kind !== 'call') {
       return `步骤 ${step.id} 的 kind 非法`
+    }
+    if (kind === 'call') {
+      if (typeof step.target !== 'string' || step.target === '') {
+        return `步骤 ${step.id} 缺少要执行的指令 id`
+      }
+      if (/\{[A-Za-z0-9_]+\}/.test(step.target)) {
+        return `步骤 ${step.id} 的执行指令不能引用变量`
+      }
+      if (step.push === true) return `步骤 ${step.id} 的执行指令步骤不能勾选推送`
+      continue
     }
     // 只有 create / merge / tag 需要来源；push / pull / commit 的来源可以是空串。
     const needsSource = kind === 'create' || kind === 'merge' || kind === 'tag'
@@ -450,7 +473,7 @@ export function validateTemplate(value: unknown): string | null {
 }
 
 /**
- * 校验组合指令引用的指令是否存在、是否成环（保存时用）。
+ * 校验指令引用（kind=call 步骤，以及旧版 compose）是否存在、是否成环（保存时用）。
  *
  * @param template 待保存的指令。
  * @param all 保存后会落盘的全部指令（包含这条）。
@@ -460,14 +483,14 @@ export function validateComposeRefs(
   template: WorkflowTemplate,
   all: WorkflowTemplate[],
 ): string | null {
-  if (!Array.isArray(template.compose)) return null
   const byId = new Map(all.map(item => [item.id, item]))
   const walk = (item: WorkflowTemplate, path: string[]): string | null => {
-    if (!Array.isArray(item.compose)) return null
-    for (const id of item.compose) {
+    const legacy = Array.isArray(item.compose) ? item.compose : []
+    const calls = (item.steps ?? []).filter(step => step.kind === 'call').map(step => step.target)
+    for (const id of [...legacy, ...calls]) {
       const child = byId.get(id)
-      if (child === undefined) return `组合引用的指令不存在：${id}`
-      if (path.includes(child.id)) return `组合存在循环引用：${[...path, child.id].join(' → ')}`
+      if (child === undefined) return `引用的指令不存在：${id}`
+      if (path.includes(child.id)) return `指令引用存在循环：${[...path, child.id].join(' → ')}`
       const error = walk(child, [...path, child.id])
       if (error !== null) return error
     }
