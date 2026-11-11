@@ -64,6 +64,7 @@ interface AddTemplateArgs {
   id?: unknown
   name?: unknown
   description?: unknown
+  group?: unknown
   sync?: unknown
   overwrite?: unknown
   variables?: unknown
@@ -172,6 +173,8 @@ function normalizeTemplate(args: AddTemplateArgs): WorkflowTemplate {
   const template: WorkflowTemplate = { id, name, variables, steps }
   const description = optionalString(args.description)?.trim()
   if (description !== undefined && description !== '') template.description = description
+  const group = optionalString(args.group)?.trim()
+  if (group !== undefined && group !== '') template.group = group
   const sync = args.sync
   if (sync === 'ff' || sync === 'merge' || sync === 'rebase') template.sync = sync
   else if (sync !== undefined) throw new Error('sync 只能是 ff / merge / rebase')
@@ -184,6 +187,7 @@ const ADD_TEMPLATE_PARAMETERS: Record<string, unknown> = {
   properties: {
     name: { type: 'string', description: '指令名称，例如「发布流程（示例）」' },
     description: { type: 'string', description: '一句话说明' },
+    group: { type: 'string', description: '可选分组名，例如「发布」；省略表示未分组' },
     id: { type: 'string', description: '指令 id；省略时自动生成，覆盖已有指令时必须显式提供' },
     sync: {
       type: 'string',
@@ -324,7 +328,8 @@ export function registerTemplateTools(tools: unknown, store: TemplateStore): () 
           ? `组合：${template.compose.map(id => id).join(' → ') || '（空）'}`
           : `步骤：${steps}`
         const invalid = template.invalid === undefined ? '' : ` [无效：${template.invalid}]`
-        return `- ${template.name}（id: ${template.id}）${invalid}\n  变量：${variables}\n  ${compose}`
+        const group = template.group ? `【${template.group}】` : ''
+        return `- ${group}${template.name}（id: ${template.id}）${invalid}\n  变量：${variables}\n  ${compose}`
       }).join('\n')
     },
   }))

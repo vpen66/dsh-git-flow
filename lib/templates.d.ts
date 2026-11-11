@@ -70,6 +70,8 @@ export interface WorkflowTemplate {
     id: string;
     name: string;
     description?: string;
+    /** 可选分组名，仅用于指令列表/右键菜单归类；空串或省略表示未分组。 */
+    group?: string;
     /**
      * 本地分支与远端分叉时怎么办：
      * - `merge`（默认）：`git merge origin/x`，留一个合并提交；

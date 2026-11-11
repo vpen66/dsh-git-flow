@@ -167,6 +167,12 @@ window.__ModuleLoader__.load({
   background:transparent; color:var(--dgf-text); font-size:12px; line-height:1.4; text-align:left;
   transition:background .16s}
 .dgf-tplhead:hover{background:rgba(34,211,238,.06)}
+/* 指令分组标题 */
+.dgf-tplgroup{display:flex; align-items:center; gap:6px; padding:7px 4px 3px;
+  font-size:10px; letter-spacing:.08em; color:var(--dgf-dim); text-transform:none}
+.dgf-tplgroup .dgf-folder-icon{color:var(--dgf-amber); opacity:.9}
+.dgf-tplgroup-name{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.dgf-tplgroup-count{flex:none; opacity:.7; font-family:var(--dsh-font-family-code-default,monospace)}
 /* 指令行右侧的上移/下移按钮 */
 .dgf-tplheadline{display:flex; align-items:center; gap:2px; padding-right:5px}
 .dgf-tplheadline .dgf-tplhead{width:auto; flex:1; min-width:0}
@@ -498,6 +504,10 @@ window.__ModuleLoader__.load({
 .dgf-menu-item:hover:not(:disabled){background:rgba(34,211,238,.14); color:#bff4ff}
 .dgf-menu-item:disabled{opacity:.5; cursor:default}
 .dgf-menu-item-text{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.dgf-menu-group{font-weight:600}
+.dgf-menu-group-caret{flex:none; width:12px; color:var(--dgf-dim); font-size:9px}
+.dgf-menu-child{padding-left:20px}
+.dgf-menu-child .dgf-menu-item-text{color:var(--dgf-text)}
 .dgf-menu-sep{height:1px; margin:4px 2px;
   background:color-mix(in srgb, var(--dgf-line) 75%, transparent)}
 /* 执行弹窗：参数与流程在 prepare，逐步状态在 running/done */
@@ -586,6 +596,7 @@ body:not([data-ds-dark-theme]) .dgf-tplrow{background:#fff; border-color:rgba(14
 body:not([data-ds-dark-theme]) .dgf-tplrow:hover{border-color:rgba(8,145,178,.45)}
 body:not([data-ds-dark-theme]) .dgf-tplrow[data-on=true]{background:linear-gradient(180deg,rgba(8,145,178,.07),rgba(8,145,178,.015));
   border-color:rgba(8,145,178,.5); box-shadow:0 0 0 1px rgba(8,145,178,.12), 0 6px 18px -14px rgba(8,145,178,.6)}
+body:not([data-ds-dark-theme]) .dgf-tplgroup{color:#526274}
 body:not([data-ds-dark-theme]) .dgf-tplhead{color:#1f2937}
 body:not([data-ds-dark-theme]) .dgf-tplhead:hover{background:rgba(8,145,178,.05)}
 body:not([data-ds-dark-theme]) .dgf-tplbody{background:#f5f8fc; border-top-color:rgba(148,163,184,.36)}
@@ -865,6 +876,81 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
       return expandInstruction(template, templates)
     }
 
+
+    /**
+     * 取指令的分组名；空串表示未分组。
+     *
+     * @param template 指令。
+     * @returns 分组名。
+     */
+    function templateGroup(template) {
+      return template !== null && template !== undefined && typeof template.group === 'string'
+        ? template.group.trim()
+        : ''
+    }
+
+    /**
+     * 按分组归类指令：命名分组按首次出现顺序排列，未分组统一放最后。
+     *
+     * @param templates 指令列表。
+     * @returns `{ name, templates }[]`；name 为空串表示未分组。
+     */
+    function groupTemplates(templates) {
+      const named = []
+      const seen = new Map()
+      const loose = []
+      for (const template of templates ?? []) {
+        const name = templateGroup(template)
+        if (name === '') {
+          loose.push(template)
+          continue
+        }
+        let group = seen.get(name)
+        if (group === undefined) {
+          group = { name, templates: [] }
+          seen.set(name, group)
+          named.push(group)
+        }
+        group.templates.push(template)
+      }
+      return loose.length === 0 ? named : [...named, { name: '', templates: loose }]
+    }
+
+    /**
+     * 同组内的相邻指令（用于上下移动时的边界判断）。
+     *
+     * @param templates 全部指令。
+     * @param id 目标指令 id。
+     * @returns 同组指令数组。
+     */
+    function groupPeers(templates, id) {
+      const groups = groupTemplates(templates)
+      const group = groups.find(item => item.templates.some(template => template.id === id))
+      return group === undefined ? [] : group.templates
+    }
+
+    /**
+     * 在同组内把一条指令上移/下移；分组块会变成连续顺序，方便持久化。
+     *
+     * @param templates 全部指令。
+     * @param id 目标指令 id。
+     * @param delta -1 上移，1 下移。
+     * @returns 新数组；不能移动时返回 null。
+     */
+    function moveWithinGroup(templates, id, delta) {
+      const groups = groupTemplates(templates)
+      const groupIndex = groups.findIndex(item => item.templates.some(template => template.id === id))
+      if (groupIndex === -1) return null
+      const group = groups[groupIndex]
+      const index = group.templates.findIndex(template => template.id === id)
+      const target = index + delta
+      if (target < 0 || target >= group.templates.length) return null
+      const items = [...group.templates]
+      const [moved] = items.splice(index, 1)
+      items.splice(target, 0, moved)
+      const next = groups.map((item, position) => position === groupIndex ? { ...item, templates: items } : item)
+      return next.flatMap(item => item.templates)
+    }
 
     /**
      * 按指令声明初始化变量取值。
@@ -1654,10 +1740,54 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
      */
     function BranchMenu(props) {
       const { branch, x, y, templates, current, onPickTemplate, onSwitch, onClose } = props
+      const [openGroups, setOpenGroups] = React.useState(() => new Set())
+      const list = templates ?? []
+      const groups = groupTemplates(list)
+      const hasNamed = groups.some(group => group.name !== '')
       const width = 232
-      const height = Math.min(320, 92 + (templates ?? []).length * 30)
+      // 用展开后的总行数估算高度：展开分组时菜单位置不会突然跳动。
+      const fullRows = hasNamed
+        ? groups.reduce((sum, group) => sum
+          + (group.name === '' ? group.templates.length : 1 + group.templates.length), 0)
+        : list.length
+      const height = Math.min(360, 96 + fullRows * 30)
       const left = Math.max(6, Math.min(x, (window.innerWidth || 0) - width - 6))
       const top = Math.max(6, Math.min(y, (window.innerHeight || 0) - height - 6))
+      const toggleGroup = name => setOpenGroups(prev => {
+        const next = new Set(prev)
+        if (next.has(name)) next.delete(name)
+        else next.add(name)
+        return next
+      })
+      const templateItem = (template, indented) => h('button', {
+        key: template.id,
+        type: 'button',
+        className: cx('dgf-menu-item', indented === true ? 'dgf-menu-child' : null),
+        disabled: template.invalid !== undefined && template.invalid !== null && template.invalid !== '',
+        title: template.invalid ? `指令有问题：${template.invalid}` : `用「${template.name}」执行`,
+        onClick: () => onPickTemplate(template),
+      },
+      h('span', { className: 'dgf-menu-item-text' }, template.name),
+      template.invalid ? h('span', { className: 'dgf-chip', 'data-tone': 'fail' }, '有问题') : null)
+      const items = hasNamed
+        ? groups.flatMap(group => {
+          if (group.name === '') return group.templates.map(template => templateItem(template, false))
+          const open = openGroups.has(group.name)
+          return [
+            h('button', {
+              key: `group:${group.name}`,
+              type: 'button',
+              className: 'dgf-menu-item dgf-menu-group',
+              title: open ? '收起分组' : '展开分组',
+              onClick: () => toggleGroup(group.name),
+            },
+            h('span', { className: 'dgf-menu-group-caret' }, open ? '▾' : '▸'),
+            h('span', { className: 'dgf-menu-item-text' }, group.name),
+            h('span', { className: 'dgf-chip' }, String(group.templates.length))),
+            ...(open ? group.templates.map(template => templateItem(template, true)) : []),
+          ]
+        })
+        : list.map(template => templateItem(template, false))
       return h('div', {
         className: 'dgf-menu-mask',
         onClick: onClose,
@@ -1673,19 +1803,10 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
       },
       h('div', { className: 'dgf-menu-title dgf-keep-case' }, `分支 ${branch}`),
       h('div', { className: 'dgf-menu-title' }, '用指令执行'),
-      templates === null || templates === undefined || templates.length === 0
+      list.length === 0
         ? h('div', { className: 'dgf-caption', style: { padding: '2px 8px' } },
           '还没有指令，去「指令」页签新建')
-        : templates.map(template => h('button', {
-          key: template.id,
-          type: 'button',
-          className: 'dgf-menu-item',
-          disabled: template.invalid !== undefined && template.invalid !== null && template.invalid !== '',
-          title: template.invalid ? `指令有问题：${template.invalid}` : `用「${template.name}」执行`,
-          onClick: () => onPickTemplate(template),
-        },
-        h('span', { className: 'dgf-menu-item-text' }, template.name),
-        template.invalid ? h('span', { className: 'dgf-chip', 'data-tone': 'fail' }, '有问题') : null)),
+        : items,
       h('div', { className: 'dgf-menu-sep' }),
       h('button', {
         type: 'button',
@@ -2766,6 +2887,18 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
             onChange: event => view.onEdit({ description: event.target.value }),
           })),
         h('div', { className: 'dgf-field' },
+          h('span', { className: 'dgf-field-label' }, '分组'),
+          h('input', {
+            className: cx('dgf-input', 'dgf-grow'),
+            list: 'dgf-group-options',
+            value: draft.group ?? '',
+            placeholder: '可选，例如：发布 / 日常；留空表示未分组',
+            onChange: event => view.onEdit({ group: event.target.value }),
+          }),
+          h('datalist', { id: 'dgf-group-options' },
+            [...new Set((view.templates ?? []).map(templateGroup).filter(name => name !== ''))]
+              .map(name => h('option', { key: name, value: name })))),
+        h('div', { className: 'dgf-field' },
           h('span', { className: 'dgf-field-label' }, '分叉时'),
           h('select', {
             className: cx('dgf-select', 'dgf-grow'),
@@ -3129,6 +3262,26 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
     function renderEdit(view) {
       const { draft, templates, log } = view
 
+      /** 分组标题（未分组固定放最后）。 */
+      const groupHeader = group => h('div', {
+        key: `g:${group.name}`,
+        className: 'dgf-tplgroup',
+        'data-group': group.name === '' ? 'ungrouped' : group.name,
+      },
+      h(FolderIcon, { open: true }),
+      h('span', { className: 'dgf-tplgroup-name' }, group.name === '' ? '未分组' : group.name),
+      h('span', { className: 'dgf-tplgroup-count' }, String(group.templates.length)))
+
+      /** 按分组展开成可渲染节点；没有命名分组时不显示分组标题，保持原平铺观感。 */
+      const groupedNodes = (items, renderRow) => {
+        const groups = groupTemplates(items)
+        const hasNamed = groups.some(group => group.name !== '')
+        return groups.flatMap(group => {
+          const children = group.templates.map(renderRow)
+          return hasNamed ? [groupHeader(group), ...children] : children
+        })
+      }
+
       if (!draft) {
         return h('div', { className: 'dgf-root' },
           h(Hud, { tab: 'edit', led: 'ok', onRunTab: view.onRunTab, onEditTab: view.onEditTab }),
@@ -3156,31 +3309,35 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
                     style: { marginTop: '8px' },
                     onClick: view.onRestoreDefault,
                   }, '恢复默认指令'))
-                : h('div', { className: 'dgf-tpllist' }, templates.map((item, index) => h('div', {
-                  key: item.id,
-                  className: 'dgf-tplrow',
-                },
-                h('div', { className: 'dgf-tplheadline' },
-                  h('button', {
-                    className: 'dgf-tplhead',
-                    onClick: () => view.onSelectTemplate(item.id),
+                : h('div', { className: 'dgf-tpllist' }, groupedNodes(templates, item => {
+                  const peers = groupPeers(templates, item.id)
+                  const peerIndex = peers.findIndex(entry => entry.id === item.id)
+                  return h('div', {
+                    key: item.id,
+                    className: 'dgf-tplrow',
                   },
-                  h('span', { className: 'dgf-tplcaret' }, '▸'),
-                  h('span', { className: 'dgf-tplname' }, item.name),
-                  Array.isArray(item.compose) ? h('span', { className: 'dgf-chip' }, '组合') : null,
-                  item.invalid === undefined ? null : h('span', { className: 'dgf-chip', 'data-tone': 'fail' }, '有问题')),
-                  h('button', {
-                    className: 'dgf-iconbtn dgf-tplmove',
-                    title: '上移',
-                    disabled: view.busy === true || index === 0,
-                    onClick: () => view.onMoveTemplate(item.id, -1),
-                  }, '↑'),
-                  h('button', {
-                    className: 'dgf-iconbtn dgf-tplmove',
-                    title: '下移',
-                    disabled: view.busy === true || index === templates.length - 1,
-                    onClick: () => view.onMoveTemplate(item.id, 1),
-                  }, '↓')))))),
+                  h('div', { className: 'dgf-tplheadline' },
+                    h('button', {
+                      className: 'dgf-tplhead',
+                      onClick: () => view.onSelectTemplate(item.id),
+                    },
+                    h('span', { className: 'dgf-tplcaret' }, '▸'),
+                    h('span', { className: 'dgf-tplname' }, item.name),
+                    Array.isArray(item.compose) ? h('span', { className: 'dgf-chip' }, '组合') : null,
+                    item.invalid === undefined ? null : h('span', { className: 'dgf-chip', 'data-tone': 'fail' }, '有问题')),
+                    h('button', {
+                      className: 'dgf-iconbtn dgf-tplmove',
+                      title: '上移',
+                      disabled: view.busy === true || peerIndex <= 0,
+                      onClick: () => view.onMoveTemplate(item.id, -1),
+                    }, '↑'),
+                    h('button', {
+                      className: 'dgf-iconbtn dgf-tplmove',
+                      title: '下移',
+                      disabled: view.busy === true || peerIndex >= peers.length - 1,
+                      onClick: () => view.onMoveTemplate(item.id, 1),
+                    }, '↓')))
+                }))),
             h(LogView, { log })))
       }
 
@@ -3209,11 +3366,13 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
                                 h('button', { className: 'dgf-btn', onClick: view.onRestoreDefault }, '恢复默认'))),
 
             // 列表：一行一个指令，点开的那个在下方展开配置。
-            h('div', { className: 'dgf-tpllist' }, rows.map(item => {
+            h('div', { className: 'dgf-tpllist' }, groupedNodes(rows, item => {
               const active = item.id === draft.id
               // 展开中的行用实时草稿渲染，名称等改动立刻反映在行头上。
               const shown = active ? draft : item
               const savedIndex = templates.findIndex(entry => entry.id === item.id)
+              const peers = savedIndex < 0 ? [] : groupPeers(templates, item.id)
+              const peerIndex = peers.findIndex(entry => entry.id === item.id)
               return h('div', {
                 key: item.id,
                 className: 'dgf-tplrow',
@@ -3248,7 +3407,7 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
                 : h('button', {
                   className: 'dgf-iconbtn dgf-tplmove',
                   title: '上移',
-                  disabled: view.busy === true || savedIndex === 0,
+                  disabled: view.busy === true || peerIndex <= 0,
                   onClick: () => view.onMoveTemplate(item.id, -1),
                 }, '↑'),
               savedIndex < 0
@@ -3256,7 +3415,7 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
                 : h('button', {
                   className: 'dgf-iconbtn dgf-tplmove',
                   title: '下移',
-                  disabled: view.busy === true || savedIndex === templates.length - 1,
+                  disabled: view.busy === true || peerIndex >= peers.length - 1,
                   onClick: () => view.onMoveTemplate(item.id, 1),
                 }, '↓')),
               active && view.collapsed !== true
@@ -3845,12 +4004,10 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
       /** 上移/下移一条已保存指令，并把新顺序写回磁盘。 */
       const moveTemplate = async (id, delta) => {
         if (busy) return
-        const index = templates.findIndex(item => item.id === id)
-        const target = index + delta
-        if (index < 0 || target < 0 || target >= templates.length) return
-        const ids = templates.map(item => item.id)
-        const [moved] = ids.splice(index, 1)
-        ids.splice(target, 0, moved)
+        const nextTemplates = moveWithinGroup(templates, id, delta)
+        if (nextTemplates === null) return
+        const ids = nextTemplates.map(item => item.id)
+        const movedName = templates.find(item => item.id === id)?.name ?? ''
         setBusy(true)
         try {
           const data = await post(ROUTE.reorder, { ids })
@@ -3859,7 +4016,7 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
             return
           }
           setTemplates(data.templates ?? [])
-          setLog([{ ok: true, text: `已调整「${templates[index].name}」的顺序` }])
+          setLog([{ ok: true, text: `已调整「${movedName}」的顺序` }])
         } catch (err) {
           setLog([{ ok: false, text: explain(err) }])
         } finally {
@@ -4112,6 +4269,7 @@ body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba
         branchRows, branchTree, collectDirPaths, FolderIcon, BranchList, BranchMenu, ExecutionModal, stepSummary,
         CommitGraph, layoutCommitGraph, graphRefInfo, commitTime,
         blankComposeTemplate, isComposedTemplate, expandComposedTemplate, expandInstruction,
+        templateGroup, groupTemplates, groupPeers, moveWithinGroup,
         stepKindLabel, stepPushable, stepFlow,
         pickVariableFor, prefillValues,
         parseDiff, toSplitRows, changeLabel,

@@ -55,7 +55,7 @@ interface CommandsService {
 const INSTRUCTIONS = [
   '你现在要为用户新增一个 DeepSeek Harness 的 Git 工作流指令。',
   '1. 先用 git 只读命令查看当前仓库的分支与远端（例如 git for-each-ref --format="%(refname:short)" refs/heads 和 git remote -v），不要修改任何分支或工作区。',
-  '2. 根据分支命名推断变量（基础分支、功能分支、发布分支等）和步骤顺序；步骤 kind 只能是 create / merge / push / tag / pull / commit / call（pull 把指定本地分支更新到远端最新，target 是分支名；commit 提交工作区全部改动，target 是提交说明；call 执行另一条已保存指令，target 是指令 id），分支名和提交说明可以用 {变量} 占位，变量之间可以有 derive 自动填充规则。',
+  '2. 根据分支命名推断变量（基础分支、功能分支、发布分支等）和步骤顺序；步骤 kind 只能是 create / merge / push / tag / pull / commit / call（pull 把指定本地分支更新到远端最新，target 是分支名；commit 提交工作区全部改动，target 是提交说明；call 执行另一条已保存指令，target 是指令 id），分支名和提交说明可以用 {变量} 占位，变量之间可以有 derive 自动填充规则；可用 group 给指令归组（可选）。',
   '3. 把整理出的指令摘要（变量、每步做什么、哪些步骤会推送）用中文列给用户，等待确认。',
   '4. 用户确认后必须调用工具 git_flow_add_template 保存；不要直接编辑 ~/.dsh/git-flow/templates.json。',
   '5. 保存成功后提醒用户刷新右栏「Git 工作流」面板。若想了解已有指令，先调用 git_flow_list_templates。',
