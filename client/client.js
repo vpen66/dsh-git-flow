@@ -517,6 +517,122 @@ window.__ModuleLoader__.load({
   .dgf-led,.dgf-chip[data-tone=run],.dgf-node[data-status=running],
   .dgf-step[data-status=running]::after{animation:none}
 }
+
+/* 浅色主题：DSH 深色时 body 上有 data-ds-dark-theme，没有该属性就是浅色。
+   这些青/紫/绿在深色背景上好看，但放到白底会发灰、看不清，这里统一换成深一档。 */
+body:not([data-ds-dark-theme]) .dgf-branch[data-on=true]{background:rgba(8,145,178,.10)}
+body:not([data-ds-dark-theme]) .dgf-branch[data-on=true] .dgf-branch-name{color:#0e7490}
+body:not([data-ds-dark-theme]) .dgf-tplrow[data-on=true] .dgf-tplname{color:#155e75}
+body:not([data-ds-dark-theme]) .dgf-tplcaret{color:#0e7490; background:rgba(8,145,178,.10); border-color:rgba(8,145,178,.35)}
+body:not([data-ds-dark-theme]) .dgf-tab[data-on=true]{color:#fff}
+body:not([data-ds-dark-theme]) .dgf-chip[data-tone=ok]{color:#047857; border-color:rgba(4,120,87,.45)}
+body:not([data-ds-dark-theme]) .dgf-chip[data-tone=kind],
+body:not([data-ds-dark-theme]) .dgf-chip[data-tone=auto]{color:#6d28d9; border-color:rgba(109,40,217,.4)}
+body:not([data-ds-dark-theme]) .dgf-chip[data-tone=push],
+body:not([data-ds-dark-theme]) .dgf-chip[data-tone=run]{color:#0e7490; border-color:rgba(14,116,144,.45)}
+body:not([data-ds-dark-theme]) .dgf-chip[data-tone=skip]{color:#b45309; border-color:rgba(180,83,9,.45)}
+body:not([data-ds-dark-theme]) .dgf-chip[data-tone=fail]{color:#be123c; border-color:rgba(190,18,60,.45)}
+body:not([data-ds-dark-theme]) .dgf-graph-ref[data-kind=head]{color:#0e7490; border-color:rgba(14,116,144,.45); background:rgba(8,145,178,.08)}
+body:not([data-ds-dark-theme]) .dgf-graph-ref[data-kind=remote]{color:#6d28d9; border-color:rgba(109,40,217,.4)}
+body:not([data-ds-dark-theme]) .dgf-graph-ref[data-kind=tag]{color:#b45309; border-color:rgba(180,83,9,.4)}
+body:not([data-ds-dark-theme]) .dgf-graph-ref[data-kind=branch]{color:#047857; border-color:rgba(4,120,87,.4)}
+body:not([data-ds-dark-theme]) .dgf-graph-svg{filter:brightness(.72) saturate(1.2)}
+body:not([data-ds-dark-theme]) .dgf-btn[data-variant=primary]{color:#0e7490}
+body:not([data-ds-dark-theme]) .dgf-btn:hover:not(:disabled){color:#0e7490}
+body:not([data-ds-dark-theme]) .dgf-flow-arrow,
+body:not([data-ds-dark-theme]) .dgf-log-mark{color:#0e7490}
+body:not([data-ds-dark-theme]) .dgf-resume{color:#155e75; background:rgba(8,145,178,.07); border-color:rgba(14,116,144,.28)}
+
+/* 浅色主题的完整表面：白色卡片、深色文字、浅灰输入框，避免深色半透明叠在白底上发灰 */
+body:not([data-ds-dark-theme]) .dgf-root{
+  --dgf-text:var(--dsw-alias-label-primary,#1f2937);
+  --dgf-dim:color-mix(in srgb,var(--dsw-alias-label-tertiary,#64748b) 80%, #334155);
+  --dgf-line:color-mix(in srgb,var(--dsw-alias-border-l1,#cbd5e1) 72%, transparent);
+  --dgf-surface:var(--dsw-alias-bg-layer-1,#ffffff);
+  background:
+    radial-gradient(900px 420px at 8% -12%, rgba(8,145,178,.07), transparent 62%),
+    radial-gradient(700px 380px at 108% 4%, rgba(109,40,217,.05), transparent 58%),
+    var(--dsw-alias-bg-base,#f7f9fc);
+}
+body:not([data-ds-dark-theme]) .dgf-root::before{
+  opacity:.4;
+  background-image:
+    linear-gradient(rgba(30,64,120,.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(30,64,120,.05) 1px, transparent 1px);
+}
+body:not([data-ds-dark-theme]) .dgf-scroll::-webkit-scrollbar-thumb{background:rgba(30,64,120,.18)}
+body:not([data-ds-dark-theme]) .dgf-sec{
+  background:color-mix(in srgb,var(--dsw-alias-bg-layer-1,#fff) 94%, #eef4fb);
+  border-color:rgba(148,163,184,.42);
+  box-shadow:0 1px 2px rgba(15,23,42,.04);
+}
+body:not([data-ds-dark-theme]) .dgf-sec::after{opacity:.35}
+body:not([data-ds-dark-theme]) .dgf-hud{border-color:transparent}
+body:not([data-ds-dark-theme]) .dgf-tabs{background:#fff; border-color:rgba(148,163,184,.42)}
+body:not([data-ds-dark-theme]) .dgf-tab{color:#5b6b7f}
+body:not([data-ds-dark-theme]) .dgf-tab:hover{color:#1f2937}
+body:not([data-ds-dark-theme]) .dgf-tplrow{background:#fff; border-color:rgba(148,163,184,.42);
+  box-shadow:0 1px 2px rgba(15,23,42,.04)}
+body:not([data-ds-dark-theme]) .dgf-tplrow:hover{border-color:rgba(8,145,178,.45)}
+body:not([data-ds-dark-theme]) .dgf-tplrow[data-on=true]{background:linear-gradient(180deg,rgba(8,145,178,.07),rgba(8,145,178,.015));
+  border-color:rgba(8,145,178,.5); box-shadow:0 0 0 1px rgba(8,145,178,.12), 0 6px 18px -14px rgba(8,145,178,.6)}
+body:not([data-ds-dark-theme]) .dgf-tplhead{color:#1f2937}
+body:not([data-ds-dark-theme]) .dgf-tplhead:hover{background:rgba(8,145,178,.05)}
+body:not([data-ds-dark-theme]) .dgf-tplbody{background:#f5f8fc; border-top-color:rgba(148,163,184,.36)}
+body:not([data-ds-dark-theme]) .dgf-subsec{background:#f8fafc; border-color:rgba(148,163,184,.36)}
+body:not([data-ds-dark-theme]) .dgf-step{background:#fff; border-color:rgba(148,163,184,.45)}
+body:not([data-ds-dark-theme]) .dgf-node{background:#fff; border-color:rgba(148,163,184,.55); color:#475569}
+body:not([data-ds-dark-theme]) .dgf-input,
+body:not([data-ds-dark-theme]) .dgf-select,
+body:not([data-ds-dark-theme]) .dgf-commit-input{
+  background:#fff; border-color:rgba(148,163,184,.55); color:#1f2937;
+}
+body:not([data-ds-dark-theme]) .dgf-input::placeholder,
+body:not([data-ds-dark-theme]) .dgf-commit-input::placeholder{color:#94a3b8; opacity:1}
+body:not([data-ds-dark-theme]) .dgf-field-label,
+body:not([data-ds-dark-theme]) .dgf-sec-title,
+body:not([data-ds-dark-theme]) .dgf-caption,
+body:not([data-ds-dark-theme]) .dgf-empty,
+body:not([data-ds-dark-theme]) .dgf-flow-src,
+body:not([data-ds-dark-theme]) .dgf-note,
+body:not([data-ds-dark-theme]) .dgf-meter-text{color:#526274}
+body:not([data-ds-dark-theme]) .dgf-tplname,
+body:not([data-ds-dark-theme]) .dgf-flow-dst{color:#1f2937}
+body:not([data-ds-dark-theme]) .dgf-btn{background:#fff; border-color:rgba(148,163,184,.48); color:#1f2937}
+body:not([data-ds-dark-theme]) .dgf-btn[data-variant=ghost]{background:transparent; color:#526274}
+body:not([data-ds-dark-theme]) .dgf-btn[data-variant=danger]{color:#be123c; border-color:rgba(190,18,60,.35)}
+body:not([data-ds-dark-theme]) .dgf-btn[data-variant=primary]{
+  background:linear-gradient(120deg,rgba(8,145,178,.14),rgba(109,40,217,.12));
+  border-color:rgba(8,145,178,.55); color:#0e7490;
+}
+body:not([data-ds-dark-theme]) .dgf-menu{
+  background:#fff; border-color:rgba(148,163,184,.45);
+  box-shadow:0 18px 40px -16px rgba(15,23,42,.3), 0 0 0 1px rgba(8,145,178,.08);
+}
+body:not([data-ds-dark-theme]) .dgf-menu-title,
+body:not([data-ds-dark-theme]) .dgf-menu-sep{color:#526274; border-color:rgba(148,163,184,.35)}
+body:not([data-ds-dark-theme]) .dgf-menu-item{color:#1f2937}
+body:not([data-ds-dark-theme]) .dgf-menu-item:hover:not(:disabled){background:rgba(8,145,178,.10); color:#0e7490}
+body:not([data-ds-dark-theme]) .dgf-confirm{
+  background:color-mix(in srgb,var(--dsw-alias-bg-layer-1,#fff) 98%, #eef4fb);
+  border-color:rgba(148,163,184,.45);
+  box-shadow:0 24px 60px -24px rgba(15,23,42,.32);
+}
+body:not([data-ds-dark-theme]) .dgf-confirm-title,
+body:not([data-ds-dark-theme]) .dgf-confirm-tip{color:#1f2937}
+body:not([data-ds-dark-theme]) .dgf-confirm-meta{color:#526274}
+body:not([data-ds-dark-theme]) .dgf-picker-list{background:#fff; border-color:rgba(148,163,184,.45);
+  box-shadow:0 14px 30px -14px rgba(15,23,42,.28)}
+body:not([data-ds-dark-theme]) .dgf-picker-item{color:#1f2937}
+body:not([data-ds-dark-theme]) .dgf-picker-item:hover{background:rgba(8,145,178,.10); color:#0e7490}
+body:not([data-ds-dark-theme]) .dgf-picker-empty{color:#64748b}
+body:not([data-ds-dark-theme]) .dgf-graph{background:rgba(15,23,42,.02); border-color:rgba(148,163,184,.35)}
+body:not([data-ds-dark-theme]) .dgf-graph-row:hover{background:rgba(8,145,178,.06)}
+body:not([data-ds-dark-theme]) .dgf-graph-row[data-head=true]{background:rgba(8,145,178,.08)}
+body:not([data-ds-dark-theme]) .dgf-graph-subject{color:#334155}
+body:not([data-ds-dark-theme]) .dgf-graph-meta{color:#526274}
+body:not([data-ds-dark-theme]) .dgf-log{color:#475569}
+body:not([data-ds-dark-theme]) .dgf-output{background:#f1f5f9; border-color:rgba(148,163,184,.4); color:#334155}
 `
 
     /**
@@ -2120,6 +2236,8 @@ window.__ModuleLoader__.load({
                   : null,
                 h('input', {
                   className: cx('dgf-input', 'dgf-grow'),
+                  name: 'dgf-commit-override',
+                  autoComplete: 'off',
                   value: override !== undefined ? override : commitDisplay(item.step),
                   placeholder: '写这次提交的说明',
                   onChange: event => props.onCommitOverride(item.step.id, event.target.value),
@@ -2468,6 +2586,8 @@ window.__ModuleLoader__.load({
               commitFilesBlock,
               h('textarea', {
                 className: 'dgf-commit-input',
+                name: 'dgf-commit-message',
+                autoComplete: 'off',
                 value: view.commitMessage ?? '',
                 placeholder: '提交说明（必填，可用多行，例如：fix: 修正登录跳转）',
                 autoFocus: true,
