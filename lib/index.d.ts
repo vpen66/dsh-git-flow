@@ -3,7 +3,7 @@
  *
  * 面板是会话级的侧边栏标签页，浏览器侧发四类请求：
  * - `POST /git-flow/repo`：读会话工作目录的仓库状态（只读）。
- * - `POST /git-flow/templates` / `/save` / `/delete`：指令的读与改。
+ * - `POST /git-flow/templates` / `/save` / `/delete` / `/reorder`：指令的读、改与排序。
  * - `POST /git-flow/step`：执行指令中的一步。
  * - `POST /git-flow/commit`：提交工作区里的改动（提交信息与勾选的文件由面板传入）。
  * - `POST /git-flow/changes`：列出工作区里的改动文件（提交弹层的勾选列表）。
@@ -49,8 +49,10 @@ export declare const SWITCH_PATH = "/git-flow/switch-branch";
 export declare const GRAPH_PATH = "/git-flow/graph";
 /** 恢复内置默认指令路由。 */
 export declare const RESTORE_PATH = "/git-flow/templates/restore-default";
+/** 指令排序路由。 */
+export declare const REORDER_PATH = "/git-flow/templates/reorder";
 /**
- * 插件入口：注册会话索引、指令存储、十六条路由，以及给 AI 用的指令工具与命令。
+ * 插件入口：注册会话索引、指令存储、十七条路由，以及给 AI 用的指令工具与命令。
  *
  * @param ctx 插件上下文。
  */

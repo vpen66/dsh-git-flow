@@ -226,6 +226,13 @@ export declare class TemplateStore {
      */
     upsert(template: WorkflowTemplate): Promise<WorkflowTemplate[]>;
     /**
+     * 按给定的 id 顺序重排指令；未提到的指令按原相对顺序排在后面。
+     *
+     * @param ids 期望的指令 id 顺序（可只传一部分）。
+     * @returns 重排后的全部指令。
+     */
+    reorder(ids: string[]): Promise<WorkflowTemplate[]>;
+    /**
      * 确保内置的默认发布指令存在；已被删除时重新加回来。
      *
      * @returns 恢复后的全部指令，以及这次是否真的补上了。
